@@ -28,7 +28,8 @@
 | --- | --- | --- |
 | `DATABASE_URL` | да | Postgres, например `postgres://user:pass@host:5432/asdic` |
 | `AUTH_SECRET` | да | Длинная случайная строка для подписи сессий |
-| `ANTHROPIC_API_KEY` | для ИИ | Ключ Claude API. Без него всё работает, кроме ИИ |
+| `ASDIC_ANTHROPIC_API_KEY` или `ANTHROPIC_API_KEY` | для ИИ | Ключ Claude API (sk-ant-api…). Без него всё работает, кроме ИИ. Первое имя нужно там, где ANTHROPIC_* занято другим инструментом |
+| `ASDIC_ANTHROPIC_BASE_URL` | нет | Адрес Claude API, по умолчанию `https://api.anthropic.com` |
 | `AI_PROVIDER` | нет | `claude` по умолчанию |
 | `ASDIC_MODEL` | нет | Основная модель, по умолчанию `claude-opus-5-5` |
 | `ASDIC_FAST_MODEL` | нет | Быстрая модель для описаний файлов, по умолчанию `claude-haiku-5-5` |
