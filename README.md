@@ -1,36 +1,53 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Платформа ASDIC™
 
-## Getting Started
+Рабочее место для пути компании из точки A в точку B по методу ASDIC™: Analysis → Strategy → Design → Interaction → Control. Каждая задача внутри этапа окрашена светофором: красное решает и подписывает человек, жёлтое делает ИИ и проверяет человек, зелёное делает ИИ с выборочной проверкой.
 
-First, run the development server:
+## Что внутри
 
-```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+- Метод как данные: `src/method/asdic.ts` (5 этапов, 30 уровней, требования, поля, правила).
+- Планы, записи, история правок, подписи красных решений, закрытие этапов человеком.
+- Источники: PDF, DOCX, MD, TXT, CSV, заметки и страницы. Каждая цитата ИИ сверяется с текстом источника, непроверяемые отбрасываются.
+- ИИ: черновики записей, три варианта для красных решений (сначала слабые места), улучшение записи, критика, поиск в интернете.
+- Документы этапа: PDF, Word, Markdown; каждая сборка хранится версией.
+- Журнал вызовов ИИ: `/admin/ai` (модель, токены, стоимость, ошибки, итог для человека).
+- Бесплатный классификатор задач без входа: `/classify`.
+
+## Слой ИИ
+
+Операции (`src/lib/ai/ops.ts`) знают только интерфейс `AIProvider` из `src/lib/ai/provider.ts`. Провайдер выбирается переменной `AI_PROVIDER`; сейчас есть `claude` (`src/lib/ai/providers/claude.ts`). Чтобы подключить другого провайдера (например, модель на серверах в РФ), нужен один файл-адаптер с методами `structured` и `webResearch` и строка в `provider()`. Если провайдер не умеет искать в интернете, кнопки поиска скрываются сами.
+
+## Переменные окружения
+
+| Переменная | Нужна | Что это |
+| --- | --- | --- |
+| `DATABASE_URL` | да | Postgres, например `postgres://user:pass@host:5432/asdic` |
+| `AUTH_SECRET` | да | Длинная случайная строка для подписи сессий |
+| `ANTHROPIC_API_KEY` | для ИИ | Ключ Claude API. Без него всё работает, кроме ИИ |
+| `AI_PROVIDER` | нет | `claude` по умолчанию |
+| `ASDIC_MODEL` | нет | Основная модель, по умолчанию `claude-opus-5-5` |
+| `ASDIC_FAST_MODEL` | нет | Быстрая модель для описаний файлов, по умолчанию `claude-haiku-5-5` |
+| `ADMIN_EMAILS` | нет | Почты через запятую, кому открыт журнал ИИ |
+| `SIGNUP_CODE` | нет | Если задан, регистрация только по этому коду |
+| `UPLOAD_DIR` | нет | Папка для файлов, по умолчанию `./data/uploads` |
+| `CHROMIUM_PATH` | нет | Chromium для PDF, по умолчанию `/opt/pw-browsers/chromium` |
+
+## Запуск локально
+
+```sh
+npm install
+npx drizzle-kit migrate          # нужна база из DATABASE_URL
+npm run dev                      # http://localhost:3000
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+## Docker
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```sh
+docker build -t asdic .
+docker run -p 3000:3000 -e DATABASE_URL=... -e AUTH_SECRET=... -e ANTHROPIC_API_KEY=... -v asdic-data:/app/data asdic
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Миграции применяются при старте контейнера.
 
-## Learn More
+## Шрифт
 
-To learn more about Next.js, take a look at the following resources:
-
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
-
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+Space Grotesk с кириллицей лежит в `src/fonts` (лицензия OFL, см. README там).

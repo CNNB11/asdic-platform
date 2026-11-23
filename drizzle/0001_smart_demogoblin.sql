@@ -1,0 +1,1 @@
+ALTER TABLE "documents" ADD COLUMN "model" jsonb NOT NULL;
