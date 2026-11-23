@@ -1,6 +1,6 @@
 import { desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
-import { generateVisual, setVisualVerdict } from "@/app/actions";
+import { editVisual, generateVisual, setVisualVerdict } from "@/app/actions";
 import { imageProvider } from "@/lib/images/provider";
 import { PendingNote, Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
@@ -20,12 +20,14 @@ export async function Visuals({
   item,
   made,
   failed,
+  edited,
   error,
 }: {
   planId: string;
   item: typeof schema.items.$inferSelect;
   made?: string;
   failed?: string;
+  edited?: boolean;
   error?: string;
 }) {
   const rows = await db.select().from(schema.visuals).where(eq(schema.visuals.itemId, item.id)).orderBy(desc(schema.visuals.createdAt));
@@ -63,6 +65,7 @@ export async function Visuals({
           {failed ? `, не получилось: ${failed}` : ""}.
         </p>
       )}
+      {edited && <p className="text-head">Правка готова: новая версия сверху, прежняя сохранена ниже.</p>}
       {error && <p className="text-red">{error}</p>}
 
       {provider && (
@@ -117,9 +120,12 @@ export async function Visuals({
               )}
               {v.notes && <p className="text-sm">{v.notes}</p>}
               <div className="flex flex-wrap items-center justify-between gap-2">
-                <span className={`chip ${v.verdict === "accepted" || v.verdict === "base" ? "border-head text-head" : ""}`}>
-                  {VERDICT_LABEL[v.verdict] ?? v.verdict}
-                  {v.verdictBy ? ` · ${v.verdictBy}` : ""}
+                <span className="flex flex-wrap gap-2">
+                  <span className={`chip ${v.verdict === "accepted" || v.verdict === "base" ? "border-head text-head" : ""}`}>
+                    {VERDICT_LABEL[v.verdict] ?? v.verdict}
+                    {v.verdictBy ? ` · ${v.verdictBy}` : ""}
+                  </span>
+                  {v.parentId && <span className="chip">Версия после правки</span>}
                 </span>
                 <span className="cap">
                   {v.model} · {fmtDate(v.createdAt)}
@@ -155,8 +161,28 @@ export async function Visuals({
                   </a>
                 )}
               </div>
+              {(v.mime === "text/html" || v.mime === "image/svg+xml") && provider?.selfLogged && (
+                <form action={editVisual.bind(null, planId, v.id)} className="grid gap-2">
+                  <label className="grid gap-1">
+                    <span className="cap">Точечная правка: Claude поменяет только это, остальное останется как есть</span>
+                    <textarea
+                      name="instruction"
+                      rows={2}
+                      maxLength={2000}
+                      className="field"
+                      placeholder="Например: акцент теплее; анимация вдвое медленнее; заголовок короче; знак толще в 16 px"
+                    />
+                  </label>
+                  <div>
+                    <Submit className="btn" pending="Claude правит…">
+                      Поправить
+                    </Submit>
+                    <PendingNote text="Обычно до минуты." />
+                  </div>
+                </form>
+              )}
               <details>
-                <summary className="cap cursor-pointer">Бриф, по которому сделано</summary>
+                <summary className="cap cursor-pointer">{v.parentId ? "Что просили поправить" : "Бриф, по которому сделано"}</summary>
                 <p className="mt-1 text-sm">{v.prompt}</p>
               </details>
             </li>

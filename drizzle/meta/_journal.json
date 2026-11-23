@@ -43,6 +43,13 @@
       "when": 1795471929133,
       "tag": "0005_visual_notes",
       "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1795472914652,
+      "tag": "0006_visual_parent",
+      "breakpoints": true
     }
   ]
 }

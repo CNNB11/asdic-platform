@@ -37,6 +37,17 @@ function cssUrls(s: string) {
     );
 }
 
+const INJECTED_META = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">`;
+
+/** Убирает то, что платформа добавила при сохранении (встроенный шрифт), чтобы отдать код ИИ на правку */
+export function stripInjected(code: string) {
+  return code
+    .split(INJECTED_META)
+    .join("")
+    .replace(/<style data-asdic>[\s\S]*?<\/style>/g, "")
+    .replace(/<style>@font-face\{font-family:"Space Grotesk";src:url\(data:font\/woff2;base64,[^)]*\)[^<]*<\/style>/g, "");
+}
+
 export function sanitizeSvg(raw: string, fontCss: string) {
   let s = raw.trim();
   const start = s.indexOf("<svg");
@@ -45,7 +56,7 @@ export function sanitizeSvg(raw: string, fontCss: string) {
   s = s.slice(start, end + 6);
   s = cssUrls(links(common(s.replace(/<image[\s\S]*?(\/>|<\/image\s*>)/gi, ""))));
   if (!/xmlns="http:\/\/www\.w3\.org\/2000\/svg"/.test(s)) s = s.replace("<svg", '<svg xmlns="http://www.w3.org/2000/svg"');
-  if (/Space Grotesk/i.test(s)) s = s.replace(/<svg[^>]*>/, (m) => `${m}<style>${fontCss}</style>`);
+  if (fontCss) s = s.replace(/<svg[^>]*>/, (m) => `${m}<style data-asdic>${fontCss}</style>`);
   return s;
 }
 
@@ -55,7 +66,7 @@ export function sanitizeHtml(raw: string, fontCss: string) {
   if (start < 0) throw new ImageError("Claude вернул не HTML. Попробуйте ещё раз.");
   s = s.slice(start);
   s = cssUrls(links(common(s.replace(/<img\b[^>]*>/gi, ""))));
-  const head = `<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${fontCss}html,body{overflow-x:hidden}</style>`;
+  const head = `${INJECTED_META}<style data-asdic>${fontCss}html,body{overflow-x:hidden}</style>`;
   s = /<head[^>]*>/i.test(s) ? s.replace(/<head[^>]*>/i, (m) => `${m}${head}`) : s.replace(/<html[^>]*>/i, (m) => `${m}<head>${head}</head>`);
   return s;
 }
