@@ -7,6 +7,7 @@ import { capabilities } from "@/lib/ai/provider";
 import { locateQuote } from "@/lib/sources";
 import { itemTitle } from "@/method";
 import { PendingNote, Submit } from "@/components/Submit";
+import { Visuals } from "@/components/Visuals";
 import { ItemBadge, ModeChip, ORIGIN_LABEL, OP_LABEL, ValuesView, fmtDate } from "@/components/ui";
 
 export default async function ItemPage({ params, searchParams }: PageProps<"/plans/[planId]/items/[itemId]">) {
@@ -91,6 +92,16 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/pla
         <ValuesView section={section} values={item.values} evidence={evidence} />
         {evidence.length === 0 && section.fields.some((f) => f.evidence === "recommended") && <p className="cap mt-4">У записи нет цитат из источников.</p>}
       </section>
+
+      {section.visuals && (
+        <Visuals
+          planId={planId}
+          item={item}
+          made={sp.made ? String(sp.made) : undefined}
+          failed={sp.failed ? String(sp.failed) : undefined}
+          error={sp.verr ? String(sp.verr) : undefined}
+        />
+      )}
 
       {red && d && (item.reviewStatus === "signed" || d.options.length > 0) && (
         <section className="card border-red/40 p-5">
