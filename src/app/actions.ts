@@ -410,3 +410,40 @@ export async function reopenStage(planId: string, stageKey: string) {
   await db.delete(schema.stageClosures).where(and(eq(schema.stageClosures.planId, planId), eq(schema.stageClosures.stageKey, stageKey)));
   revalidatePath(`/plans/${planId}`, "layout");
 }
+
+// ---------- визуальные концепции ----------
+
+/** Генерация изображений по записи-концепции. Ошибку провайдера показываем на странице записи. */
+export async function generateVisual(planId: string, itemId: string, fd: FormData) {
+  const { user, method } = await requirePlan(planId);
+  const [it] = await db.select().from(schema.items).where(and(eq(schema.items.id, itemId), eq(schema.items.planId, planId)));
+  if (!it || !findSection(method, it.sectionKey).section.visuals) redirect(`/plans/${planId}`);
+  const { generateVisuals } = await import("@/lib/images/generate");
+  let q: string;
+  try {
+    const r = await generateVisuals({ planId, item: it, userId: user.id, count: Number(fd.get("count") ?? 1) || 1, aspect: String(fd.get("aspect") ?? "") });
+    q = `made=${r.made}${r.failed ? `&failed=${r.failed}` : ""}`;
+  } catch (e) {
+    q = `verr=${encodeURIComponent((e as Error).message.slice(0, 400))}`;
+  }
+  revalidatePath(`/plans/${planId}/items/${itemId}`);
+  redirect(`/plans/${planId}/items/${itemId}?${q}#visuals`);
+}
+
+const VERDICTS = ["accepted", "base", "rejected", "new"] as const;
+
+/** Решение человека по картинке. «Принять» или «Взять как основу» заодно утверждает концепцию. */
+export async function setVisualVerdict(planId: string, visualId: string, verdict: string) {
+  const { user } = await requirePlan(planId);
+  if (!(VERDICTS as readonly string[]).includes(verdict)) return;
+  const [v] = await db.select().from(schema.visuals).where(and(eq(schema.visuals.id, visualId), eq(schema.visuals.planId, planId)));
+  if (!v) return;
+  await db.update(schema.visuals).set({ verdict, verdictBy: verdict === "new" ? null : user.name }).where(eq(schema.visuals.id, visualId));
+  if (verdict === "accepted" || verdict === "base") {
+    await db
+      .update(schema.items)
+      .set({ reviewStatus: "approved", reviewedBy: user.name, reviewedAt: new Date() })
+      .where(and(eq(schema.items.id, v.itemId), eq(schema.items.planId, planId), eq(schema.items.reviewStatus, "unreviewed")));
+  }
+  revalidatePath(`/plans/${planId}`, "layout");
+}

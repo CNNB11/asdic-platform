@@ -158,3 +158,22 @@ export const aiCalls = pgTable("ai_calls", {
   responsePreview: text("response_preview").notNull().default(""),
   createdAt: ts("created_at"),
 });
+
+/** Изображения, сгенерированные по записи-концепции. verdict: new | accepted | base | rejected */
+export const visuals = pgTable("visuals", {
+  id: id(),
+  planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+  itemId: text("item_id").notNull().references(() => items.id, { onDelete: "cascade" }),
+  storageKey: text("storage_key").notNull(),
+  mime: text("mime").notNull(),
+  /** Промпт ровно в том виде, в каком ушёл провайдеру */
+  prompt: text("prompt").notNull(),
+  aspect: text("aspect").notNull().default("1:1"),
+  provider: text("provider").notNull(),
+  model: text("model").notNull(),
+  costUsd: text("cost_usd").notNull().default("0"),
+  verdict: text("verdict").notNull().default("new"),
+  verdictBy: text("verdict_by"),
+  createdBy: text("created_by").notNull(),
+  createdAt: ts("created_at"),
+});

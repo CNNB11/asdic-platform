@@ -58,7 +58,7 @@ export interface CritiqueResult {
 // ---------- сбор контекста ----------
 
 async function loadContext(plan: Plan, method: Method, sectionKey: string, scope: Scope, excludeItemId?: string) {
-  const { stage } = findSection(method, sectionKey);
+  const { stage, section } = findSection(method, sectionKey);
   const [srcRows, itemRows] = await Promise.all([
     db.select().from(schema.sources).where(and(eq(schema.sources.planId, plan.id), eq(schema.sources.status, "ready"))),
     db.select().from(schema.items).where(eq(schema.items.planId, plan.id)),
@@ -66,6 +66,9 @@ async function loadContext(plan: Plan, method: Method, sectionKey: string, scope
   const stageKeys = new Set(stage.sections.map((s) => s.key));
   const items = itemRows
     .filter((i) => i.id !== excludeItemId)
+    // Уровни, которые строятся на решениях (например, визуалы), видят только проверенные записи;
+    // свои записи уровня видны всегда, чтобы ИИ не повторялся
+    .filter((i) => !section.ai?.approvedOnly || i.sectionKey === sectionKey || i.reviewStatus !== "unreviewed")
     .filter((i) => (scope === "plan" ? true : scope === "stage" ? stageKeys.has(i.sectionKey) : i.sectionKey === sectionKey));
   const sources: SourceCtx[] = srcRows.map((s) => ({ id: s.id, title: s.title, text: s.text }));
   return { stage, sources, items };
@@ -226,7 +229,9 @@ export async function runDraft(a: {
       }
       const task = red
         ? `<task>Это красный уровень: решение принимает человек. Предложи три действительно разных варианта решения для уровня «${section.title}», заполнив поля для каждого. Для каждого варианта сначала назови слабые места (cons), потом сильные (pros), потом риски. Поле rationale заполни аргументами в пользу варианта со ссылками на записи анализа. Не выбирай за человека и не говори, какой вариант лучший.</task>`
-        : `<task>Предложи до ${section.draftLimit} записей типа «${section.itemLabel}» для уровня «${section.title}». Заполни все поля, которые можно обосновать материалами. Записи должны отличаться друг от друга и не повторять уже существующие в плане.${section.fields.some((f) => f.uniqueTrue) ? " Значение true в поле «" + section.fields.find((f) => f.uniqueTrue)!.label + "» может быть только у одной записи." : ""}</task>`;
+        : section.ai?.task
+          ? `<task>${section.ai.task}\nНе больше ${section.draftLimit} записей.</task>`
+          : `<task>Предложи до ${section.draftLimit} записей типа «${section.itemLabel}» для уровня «${section.title}». Заполни все поля, которые можно обосновать материалами. Записи должны отличаться друг от друга и не повторять уже существующие в плане.${section.fields.some((f) => f.uniqueTrue) ? " Значение true в поле «" + section.fields.find((f) => f.uniqueTrue)!.label + "» может быть только у одной записи." : ""}</task>`;
       const parts: Part[] = [
         ...sourcesBlock(sources),
         {

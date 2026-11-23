@@ -13,7 +13,7 @@ export default async function SectionAiPage({ params, searchParams }: PageProps<
   const { method } = await requirePlan(planId);
   const { stage, section } = sectionOr404(method, sectionKey);
   const { webSearch } = await capabilities();
-  const web = sp.web === "1" && webSearch;
+  const web = sp.web === "1" && webSearch && !section.ai?.approvedOnly;
   const sources = await planSources(planId);
   const red = section.mode === "red";
   const base = `/plans/${planId}`;
@@ -25,7 +25,8 @@ export default async function SectionAiPage({ params, searchParams }: PageProps<
           ← {stage.title} · {stage.titleRu}
         </Link>
         <h1 className="mt-2">
-          {red ? "Варианты решения" : "Черновик"}: {section.title}
+          {red ? "Варианты решения" : (section.ai?.cta ?? "Черновик")}
+          {section.ai?.cta ? "" : `: ${section.title}`}
         </h1>
         <div className="mt-2">
           <ModeChip mode={section.mode} />
@@ -33,7 +34,9 @@ export default async function SectionAiPage({ params, searchParams }: PageProps<
         <p className="prose-w mt-3">
           {red
             ? "ИИ предложит три разных варианта. У каждого сначала слабые места, потом сильные и риски. Выбирать и подписывать будете вы; можно записать и свой вариант."
-            : `ИИ предложит до ${section.draftLimit} записей. Вы выберете, какие сохранить; сохранённые записи нужно будет проверить.`}
+            : section.ai?.intro
+              ? `${section.ai.intro} Вы выберете, какие записи сохранить; сохранённые нужно будет проверить.`
+              : `ИИ предложит до ${section.draftLimit} записей. Вы выберете, какие сохранить; сохранённые записи нужно будет проверить.`}
         </p>
         <p className="cap mt-3">
           {web
@@ -52,7 +55,7 @@ export default async function SectionAiPage({ params, searchParams }: PageProps<
         <ScopePicker />
         <div>
           <div className="flex flex-wrap gap-3">
-            <Submit pending="ИИ работает…">{red ? "Получить варианты" : "Получить черновик"}</Submit>
+            <Submit pending="ИИ работает…">{red ? "Получить варианты" : (section.ai?.cta ?? "Получить черновик")}</Submit>
             <Link href={`${base}/${stage.key}`} className="btn btn-ghost">
               Отмена
             </Link>

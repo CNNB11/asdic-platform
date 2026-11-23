@@ -5,7 +5,7 @@ import { db, schema } from "@/db";
 import { requirePlan } from "@/lib/access";
 import { planClosures, planItems } from "@/lib/data";
 import { planProgress } from "@/lib/progress";
-import { itemTitle } from "@/method";
+import { displayValue, itemTitle } from "@/method";
 import { ItemBadge, ModeChip, ModeDot, OP_LABEL, fmtDate } from "@/components/ui";
 import { closeStage, reopenStage } from "@/app/actions";
 import { Submit } from "@/components/Submit";
@@ -83,7 +83,7 @@ export default async function StagePage({ params, searchParams }: PageProps<"/pl
                   <h3>{sec.title}</h3>
                 </div>
                 <span className={`chip ${s.complete ? "border-head text-head" : ""}`}>
-                  {s.complete ? "Закрыт" : s.needed > 0 ? `Нужно ещё: ${s.needed}` : s.unreviewed ? `Ждут проверки: ${s.unreviewed}` : "Нужно утвердить"}
+                  {s.complete ? (sec.requirements.length === 0 && s.items.length === 0 ? "Необязательно" : "Закрыт") : s.needed > 0 ? `Нужно ещё: ${s.needed}` : s.unreviewed ? `Ждут проверки: ${s.unreviewed}` : "Нужно утвердить"}
                 </span>
               </div>
               <p className="prose-w mt-2">{sec.description}</p>
@@ -106,7 +106,12 @@ export default async function StagePage({ params, searchParams }: PageProps<"/pl
                       <Link href={`${base}/items/${it.id}`} className="link truncate">
                         {itemTitle(sec, it.values)}
                       </Link>
-                      <ItemBadge red={red} status={it.reviewStatus} />
+                      <span className="flex shrink-0 items-center gap-2">
+                        {sec.fields.some((f) => f.key === "need") && it.values.need ? (
+                          <span className={`chip ${it.values.need === "skip" ? "line-through" : it.values.need === "need" ? "text-head" : ""}`}>{displayValue(sec, "need", it.values.need)}</span>
+                        ) : null}
+                        <ItemBadge red={red} status={it.reviewStatus} />
+                      </span>
                     </li>
                   ))}
                 </ul>
@@ -144,11 +149,11 @@ export default async function StagePage({ params, searchParams }: PageProps<"/pl
                         </Link>
                       ))}
                       <Link href={`${base}/s/${sec.key}/ai`} className="btn">
-                        Черновик из источников
+                        {sec.ai?.cta ?? "Черновик из источников"}
                       </Link>
-                      {webSearch && (
+                      {webSearch && !sec.ai?.approvedOnly && (
                         <Link href={`${base}/s/${sec.key}/ai?web=1`} className="btn">
-                          Черновик из интернета
+                          {sec.ai?.cta ? `${sec.ai.cta} с поиском в интернете` : "Черновик из интернета"}
                         </Link>
                       )}
                     </>
