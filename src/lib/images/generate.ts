@@ -2,26 +2,28 @@ import "server-only";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
 import { storeFile } from "@/lib/sources";
-import { PROMPT_VERSION } from "@/lib/ai/telemetry";
+import { PROMPT_VERSION, withCallCtx } from "@/lib/ai/telemetry";
 import { ASPECTS, ImageError, composePrompt, imageProvider, type Aspect } from "./provider";
 
 type Item = typeof schema.items.$inferSelect;
 
 /** Генерирует count вариантов по записи-концепции, сохраняет файлы и пишет каждый вызов в журнал ИИ */
-export async function generateVisuals(a: { planId: string; item: Item; userId: string; count: number; aspect?: string; prompt?: string }) {
+export async function generateVisuals(a: { planId: string; item: Item; userId: string; count: number; aspect?: string; prompt?: string; brief?: string }) {
   const p = await imageProvider();
   const v = a.item.values;
   const prompt = String(a.prompt ?? v.prompt ?? "").trim();
   if (!prompt) throw new ImageError("Заполните промпт концепции");
   const aspect: Aspect = (ASPECTS as string[]).includes(String(a.aspect ?? v.aspect)) ? (String(a.aspect ?? v.aspect) as Aspect) : "1:1";
-  const req = { prompt, avoid: String(v.avoid ?? ""), aspect };
-  const sent = composePrompt(req, p.maxPrompt);
+  const req = { prompt, avoid: String(v.avoid ?? ""), aspect, kind: String(v.kind ?? ""), brief: a.brief };
+  const sent = p.selfLogged ? prompt : composePrompt(req, p.maxPrompt);
   const count = Math.min(4, Math.max(1, a.count));
   const results = await Promise.allSettled(
-    Array.from({ length: count }, async () => {
+    Array.from({ length: count }, async (_, i) => {
       const started = Date.now();
       try {
-        const r = await p.generate({ ...req, seed: Math.floor(Math.random() * 1e9) });
+        const r = await withCallCtx({ planId: a.planId, userId: a.userId, kind: "image" }, () =>
+          p.generate({ ...req, seed: Math.floor(Math.random() * 1e9), variant: { n: i + 1, of: count } }),
+        );
         const key = await storeFile(r.bytes, r.ext);
         await db.insert(schema.visuals).values({
           id: newId(),
@@ -34,11 +36,12 @@ export async function generateVisuals(a: { planId: string; item: Item; userId: s
           provider: p.id,
           model: r.model,
           costUsd: r.costUsd.toFixed(4),
+          notes: r.notes ?? "",
           createdBy: a.userId,
         });
-        await log(a, p.id, r.model, r.costUsd, started, sent, `${r.mime}, ${r.bytes.length} байт`);
+        if (!p.selfLogged) await log(a, p.id, r.model, r.costUsd, started, sent, `${r.mime}, ${r.bytes.length} байт`);
       } catch (e) {
-        await log(a, p.id, p.id, 0, started, sent, "", (e as Error).message);
+        if (!p.selfLogged) await log(a, p.id, p.id, 0, started, sent, "", (e as Error).message);
         throw e;
       }
     }),

@@ -99,6 +99,7 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/pla
           item={item}
           made={sp.made ? String(sp.made) : undefined}
           failed={sp.failed ? String(sp.failed) : undefined}
+          edited={sp.edited === "1"}
           error={sp.verr ? String(sp.verr) : undefined}
         />
       )}

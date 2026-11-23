@@ -1,0 +1,1 @@
+ALTER TABLE "visuals" ADD COLUMN "parent_id" text;

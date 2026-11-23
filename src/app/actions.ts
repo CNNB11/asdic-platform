@@ -12,7 +12,7 @@ import { extractText, storeFile, validateFile } from "@/lib/sources";
 import { runCritique, runDraft, runImprove, summarizeSource, type DraftResult, type ImproveResult, type OptionsResult, type Scope } from "@/lib/ai/ops";
 import { buildStageMarkdown } from "@/lib/export/markdown";
 import { withCallCtx } from "@/lib/ai/telemetry";
-import { findSection, type Section } from "@/method";
+import { displayValue, findSection, type Section } from "@/method";
 import { ASDIC } from "@/method/asdic";
 
 export type FormState = { error?: string } | undefined;
@@ -413,15 +413,42 @@ export async function reopenStage(planId: string, stageKey: string) {
 
 // ---------- визуальные концепции ----------
 
+/** Контекст для вёрстки: проверенные и подписанные записи плана, сама концепция и, для бренд-борда, тренды */
+async function visualBrief(plan: typeof schema.plans.$inferSelect, method: typeof ASDIC, it: typeof schema.items.$inferSelect, userId: string) {
+  const { itemsBlock, planBlock } = await import("@/lib/ai/prompts");
+  const { section } = findSection(method, it.sectionKey);
+  const all = await db.select().from(schema.items).where(eq(schema.items.planId, plan.id));
+  const approved = all.filter((x) => x.reviewStatus !== "unreviewed" && x.sectionKey !== it.sectionKey);
+  const concept = section.fields
+    .map((f) => {
+      const v = displayValue(section, f.key, it.values[f.key]);
+      return v ? `${f.label}: ${v}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+  let trends = "";
+  if (it.values.kind === "moodboard" || it.values.kind === "concept") {
+    const { visualTrends } = await import("@/lib/images/trends");
+    trends = await withCallCtx({ planId: plan.id, userId, kind: "image_trends" }, () => visualTrends(plan, userId));
+  }
+  return [
+    planBlock(plan),
+    itemsBlock(method, approved),
+    `<concept>\n${concept}\n</concept>`,
+    trends ? `<design_trends>\n${trends.replace(/</g, "‹")}\n</design_trends>` : "<design_trends>Поиск трендов недоступен: палитру «По тренду» строй на своих знаниях и прямо скажи об этом в борде.</design_trends>",
+  ].join("\n\n");
+}
+
 /** Генерация изображений по записи-концепции. Ошибку провайдера показываем на странице записи. */
 export async function generateVisual(planId: string, itemId: string, fd: FormData) {
-  const { user, method } = await requirePlan(planId);
+  const { user, plan, method } = await requirePlan(planId);
   const [it] = await db.select().from(schema.items).where(and(eq(schema.items.id, itemId), eq(schema.items.planId, planId)));
   if (!it || !findSection(method, it.sectionKey).section.visuals) redirect(`/plans/${planId}`);
   const { generateVisuals } = await import("@/lib/images/generate");
+  const brief = await visualBrief(plan, method, it, user.id);
   let q: string;
   try {
-    const r = await generateVisuals({ planId, item: it, userId: user.id, count: Number(fd.get("count") ?? 1) || 1, aspect: String(fd.get("aspect") ?? "") });
+    const r = await generateVisuals({ planId, item: it, userId: user.id, count: Number(fd.get("count") ?? 1) || 1, aspect: String(fd.get("aspect") ?? ""), brief });
     q = `made=${r.made}${r.failed ? `&failed=${r.failed}` : ""}`;
   } catch (e) {
     q = `verr=${encodeURIComponent((e as Error).message.slice(0, 400))}`;
@@ -446,4 +473,50 @@ export async function setVisualVerdict(planId: string, visualId: string, verdict
       .where(and(eq(schema.items.id, v.itemId), eq(schema.items.planId, planId), eq(schema.items.reviewStatus, "unreviewed")));
   }
   revalidatePath(`/plans/${planId}`, "layout");
+}
+
+/** Точечная правка визуала: Claude меняет только нужное место, результат сохраняется новой версией */
+export async function editVisual(planId: string, visualId: string, fd: FormData) {
+  const { user, plan, method } = await requirePlan(planId);
+  const instruction = String(fd.get("instruction") ?? "").trim().slice(0, 2000);
+  const [v] = await db.select().from(schema.visuals).where(and(eq(schema.visuals.id, visualId), eq(schema.visuals.planId, planId)));
+  if (!v) redirect(`/plans/${planId}`);
+  const [it] = await db.select().from(schema.items).where(and(eq(schema.items.id, v.itemId), eq(schema.items.planId, planId)));
+  if (!it) redirect(`/plans/${planId}`);
+  let q: string;
+  if (!instruction) q = `verr=${encodeURIComponent("Напишите, что поправить")}`;
+  else if (v.mime !== "text/html" && v.mime !== "image/svg+xml") q = `verr=${encodeURIComponent("Точечная правка работает только для визуалов, сверстанных Claude")}`;
+  else {
+    try {
+      const { editVisualCode } = await import("@/lib/images/providers/claude");
+      const { readStored, storeFile } = await import("@/lib/sources");
+      const { itemsBlock, planBlock } = await import("@/lib/ai/prompts");
+      const all = await db.select().from(schema.items).where(eq(schema.items.planId, planId));
+      const brief = `${planBlock(plan)}\n\n${itemsBlock(method, all.filter((x) => x.reviewStatus !== "unreviewed"))}`;
+      const r = await withCallCtx({ planId, userId: user.id, kind: "image_edit" }, async () =>
+        editVisualCode({ code: (await readStored(v.storageKey)).toString("utf8"), mime: v.mime, instruction, brief }),
+      );
+      const key = await storeFile(r.bytes, v.mime === "text/html" ? ".html" : ".svg");
+      await db.insert(schema.visuals).values({
+        id: newId(),
+        planId,
+        itemId: v.itemId,
+        parentId: v.id,
+        storageKey: key,
+        mime: v.mime,
+        prompt: instruction,
+        aspect: v.aspect,
+        provider: "claude",
+        model: r.model,
+        costUsd: r.costUsd.toFixed(4),
+        notes: `Правка: ${instruction}. ${r.notes}`,
+        createdBy: user.id,
+      });
+      q = "edited=1";
+    } catch (e) {
+      q = `verr=${encodeURIComponent((e as Error).message.slice(0, 400))}`;
+    }
+  }
+  revalidatePath(`/plans/${planId}/items/${v.itemId}`);
+  redirect(`/plans/${planId}/items/${v.itemId}?${q}#visuals`);
 }
