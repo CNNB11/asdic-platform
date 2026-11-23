@@ -12,7 +12,7 @@ import { extractText, storeFile, validateFile } from "@/lib/sources";
 import { runCritique, runDraft, runImprove, summarizeSource, type DraftResult, type ImproveResult, type OptionsResult, type Scope } from "@/lib/ai/ops";
 import { buildStageMarkdown } from "@/lib/export/markdown";
 import { withCallCtx } from "@/lib/ai/telemetry";
-import { findSection, type Section } from "@/method";
+import { displayValue, findSection, type Section } from "@/method";
 import { ASDIC } from "@/method/asdic";
 
 export type FormState = { error?: string } | undefined;
@@ -415,13 +415,26 @@ export async function reopenStage(planId: string, stageKey: string) {
 
 /** Генерация изображений по записи-концепции. Ошибку провайдера показываем на странице записи. */
 export async function generateVisual(planId: string, itemId: string, fd: FormData) {
-  const { user, method } = await requirePlan(planId);
+  const { user, plan, method } = await requirePlan(planId);
   const [it] = await db.select().from(schema.items).where(and(eq(schema.items.id, itemId), eq(schema.items.planId, planId)));
   if (!it || !findSection(method, it.sectionKey).section.visuals) redirect(`/plans/${planId}`);
   const { generateVisuals } = await import("@/lib/images/generate");
+  const { itemsBlock, planBlock } = await import("@/lib/ai/prompts");
+  const { section } = findSection(method, it.sectionKey);
+  // Контекст для вёрстки: только проверенные и подписанные записи плана и сама концепция
+  const all = await db.select().from(schema.items).where(eq(schema.items.planId, planId));
+  const approved = all.filter((x) => x.reviewStatus !== "unreviewed" && x.sectionKey !== it.sectionKey);
+  const concept = section.fields
+    .map((f) => {
+      const v = displayValue(section, f.key, it.values[f.key]);
+      return v ? `${f.label}: ${v}` : null;
+    })
+    .filter(Boolean)
+    .join("\n");
+  const brief = `${planBlock(plan)}\n\n${itemsBlock(method, approved)}\n\n<concept>\n${concept}\n</concept>`;
   let q: string;
   try {
-    const r = await generateVisuals({ planId, item: it, userId: user.id, count: Number(fd.get("count") ?? 1) || 1, aspect: String(fd.get("aspect") ?? "") });
+    const r = await generateVisuals({ planId, item: it, userId: user.id, count: Number(fd.get("count") ?? 1) || 1, aspect: String(fd.get("aspect") ?? ""), brief });
     q = `made=${r.made}${r.failed ? `&failed=${r.failed}` : ""}`;
   } catch (e) {
     q = `verr=${encodeURIComponent((e as Error).message.slice(0, 400))}`;

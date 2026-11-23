@@ -29,7 +29,7 @@ export async function Visuals({
   error?: string;
 }) {
   const rows = await db.select().from(schema.visuals).where(eq(schema.visuals.itemId, item.id)).orderBy(desc(schema.visuals.createdAt));
-  let provider: { label: string; mock?: boolean } | null = null;
+  let provider: { label: string; mock?: boolean; selfLogged?: boolean } | null = null;
   let providerError = "";
   try {
     provider = await imageProvider();
@@ -37,26 +37,29 @@ export async function Visuals({
     providerError = (e as Error).message;
   }
   const aspect = String(item.values.aspect || "1:1");
+  const board = item.values.kind === "moodboard" || item.values.kind === "concept";
   const spent = rows.reduce((n, r) => n + Number(r.costUsd), 0);
 
   return (
     <section id="visuals" className="card grid gap-4 p-5">
       <div className="flex flex-wrap items-baseline justify-between gap-3">
-        <h3>Изображения</h3>
+        <h3>{board ? "Бренд-борды" : "Макеты"}</h3>
         <span className="cap">
           {provider ? `Генерирует: ${provider.label}` : providerError}
           {spent > 0 ? ` · потрачено ≈ $${spent.toFixed(2)}` : ""}
         </span>
       </div>
-      {provider?.mock && (
+      {provider?.mock && <p className="cap">Включена тестовая заглушка (IMAGE_PROVIDER=mock): картинки не настоящие.</p>}
+      {provider?.selfLogged && (
         <p className="cap">
-          Провайдер изображений не подключён, поэтому рисуется тестовая картинка. Для России задайте YANDEX_API_KEY и YANDEX_FOLDER_ID (YandexART), для
-          международного контура OPENAI_API_KEY.
+          {board
+            ? "Claude верстает бренд-борд кодом: знак, его версии и размеры, палитра, шрифт, применение и принципы. Опирается на утверждённые записи плана."
+            : "Claude верстает макет кодом с настоящим текстом в цветах и шрифте бренда. Опирается на утверждённые записи плана."}
         </p>
       )}
       {made && (
         <p className="text-head">
-          Готово изображений: {made}
+          Готово: {made}
           {failed ? `, не получилось: ${failed}` : ""}.
         </p>
       )}
@@ -66,12 +69,13 @@ export async function Visuals({
         <form action={generateVisual.bind(null, planId, item.id)} className="flex flex-wrap items-end gap-3">
           <label className="grid gap-1">
             <span className="cap">Вариантов</span>
-            <select name="count" defaultValue="2" className="field w-24">
+            <select name="count" defaultValue="1" className="field w-24">
               {[1, 2, 3, 4].map((n) => (
                 <option key={n}>{n}</option>
               ))}
             </select>
           </label>
+          {!board && (
           <label className="grid gap-1">
             <span className="cap">Формат</span>
             <select name="aspect" defaultValue={aspect} className="field w-32">
@@ -80,26 +84,38 @@ export async function Visuals({
               ))}
             </select>
           </label>
+          )}
           <div>
-            <Submit pending="Генерирую…">{rows.length ? "Сгенерировать ещё" : "Сгенерировать по промпту"}</Submit>
-            <PendingNote text="Обычно 10–40 секунд на картинку. Не закрывайте страницу." />
+            <Submit pending={board ? "Claude верстает бренд-борд…" : "Claude верстает макет…"}>{rows.length ? "Сделать ещё" : board ? "Сверстать бренд-борд" : "Сверстать макет"}</Submit>
+            <PendingNote text={board ? "Бренд-борд занимает 1–3 минуты. Не закрывайте страницу." : "Макет занимает до минуты. Не закрывайте страницу."} />
           </div>
         </form>
       )}
 
       {rows.length === 0 ? (
-        <p className="cap">Картинок пока нет. Проверьте промпт выше: его можно поправить кнопкой «Редактировать».</p>
+        <p className="cap">Пока ничего нет. Проверьте бриф выше: его можно поправить кнопкой «Редактировать».</p>
       ) : (
-        <ul className="grid gap-4 sm:grid-cols-2">
+        <ul className={`grid gap-6 ${board ? "" : "sm:grid-cols-2"}`}>
           {rows.map((v) => (
             <li key={v.id} className={`grid content-start gap-2 ${v.verdict === "rejected" ? "opacity-50" : ""}`}>
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={`/api/plans/${planId}/visuals/${v.id}`}
-                alt={`Вариант концепции от ${fmtDate(v.createdAt)}`}
-                className="w-full rounded border border-line object-cover"
-                style={{ aspectRatio: RATIO[v.aspect] ?? "1 / 1" }}
-              />
+              {v.mime === "text/html" ? (
+                <iframe
+                  src={`/api/plans/${planId}/visuals/${v.id}`}
+                  title={`Бренд-борд от ${fmtDate(v.createdAt)}`}
+                  sandbox=""
+                  loading="lazy"
+                  className="h-[720px] w-full rounded border border-line bg-white"
+                />
+              ) : (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={`/api/plans/${planId}/visuals/${v.id}`}
+                  alt={`Вариант концепции от ${fmtDate(v.createdAt)}`}
+                  className="w-full rounded border border-line object-cover"
+                  style={{ aspectRatio: RATIO[v.aspect] ?? "1 / 1" }}
+                />
+              )}
+              {v.notes && <p className="text-sm">{v.notes}</p>}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className={`chip ${v.verdict === "accepted" || v.verdict === "base" ? "border-head text-head" : ""}`}>
                   {VERDICT_LABEL[v.verdict] ?? v.verdict}
@@ -125,12 +141,22 @@ export async function Visuals({
                     <button className="btn btn-ghost">Отклонить</button>
                   </form>
                 )}
+                {(v.mime === "text/html" || v.mime === "image/svg+xml") && (
+                  <a href={`/api/plans/${planId}/visuals/${v.id}?format=png`} className="btn btn-ghost">
+                    PNG
+                  </a>
+                )}
                 <a href={`/api/plans/${planId}/visuals/${v.id}?download=1`} className="btn btn-ghost">
-                  Скачать
+                  {v.mime === "text/html" ? "HTML" : v.mime === "image/svg+xml" ? "SVG" : "Скачать"}
                 </a>
+                {v.mime === "text/html" && (
+                  <a href={`/api/plans/${planId}/visuals/${v.id}`} target="_blank" rel="noopener" className="btn btn-ghost">
+                    Открыть целиком
+                  </a>
+                )}
               </div>
               <details>
-                <summary className="cap cursor-pointer">Промпт, который ушёл в генерацию</summary>
+                <summary className="cap cursor-pointer">Бриф, по которому сделано</summary>
                 <p className="mt-1 text-sm">{v.prompt}</p>
               </details>
             </li>

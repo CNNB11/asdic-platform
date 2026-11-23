@@ -172,6 +172,8 @@ export const visuals = pgTable("visuals", {
   provider: text("provider").notNull(),
   model: text("model").notNull(),
   costUsd: text("cost_usd").notNull().default("0"),
+  /** Пояснение автора макета (Claude): идея и опора на записи плана */
+  notes: text("notes").notNull().default(""),
   verdict: text("verdict").notNull().default("new"),
   verdictBy: text("verdict_by"),
   createdBy: text("created_by").notNull(),
