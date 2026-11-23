@@ -8,6 +8,7 @@ import { locateQuote } from "@/lib/sources";
 import { itemTitle } from "@/method";
 import { PendingNote, Submit } from "@/components/Submit";
 import { Visuals } from "@/components/Visuals";
+import { Cost } from "@/components/Cost";
 import { ItemBadge, ModeChip, ORIGIN_LABEL, OP_LABEL, ValuesView, fmtDate } from "@/components/ui";
 
 export default async function ItemPage({ params, searchParams }: PageProps<"/plans/[planId]/items/[itemId]">) {
@@ -150,6 +151,9 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/pla
             </Submit>
             <PendingNote text="Обычно до минуты." />
           </form>
+          <div className="basis-full">
+            <Cost kind="critique" note="Критика стоит" />
+          </div>
         </div>
       </section>
 

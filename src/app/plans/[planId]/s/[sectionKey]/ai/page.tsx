@@ -5,6 +5,8 @@ import { startDraft } from "@/app/actions";
 import { capabilities } from "@/lib/ai/provider";
 import { PendingNote, Submit } from "@/components/Submit";
 import { ModeChip, ScopePicker } from "@/components/ui";
+import { Cost } from "@/components/Cost";
+import { draftKind } from "@/lib/billing/tiers";
 
 /** Запуск ИИ для уровня: черновики (жёлтый/зелёный) или три варианта решения (красный) */
 export default async function SectionAiPage({ params, searchParams }: PageProps<"/plans/[planId]/s/[sectionKey]/ai">) {
@@ -53,6 +55,7 @@ export default async function SectionAiPage({ params, searchParams }: PageProps<
           <textarea name="guidance" rows={4} className="field" maxLength={4000} placeholder="Например: рынок Швейцарии, B2B, без рекламы в соцсетях" />
         </label>
         <ScopePicker />
+        <Cost kind={draftKind(red, web)} />
         <div>
           <div className="flex flex-wrap gap-3">
             <Submit pending="ИИ работает…">{red ? "Получить варианты" : (section.ai?.cta ?? "Получить черновик")}</Submit>
