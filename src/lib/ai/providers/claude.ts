@@ -100,7 +100,9 @@ async function webResearch(opts: { system: string; parts: Part[]; maxSearches?: 
         ...fallbackParams(model),
         system: opts.system,
         messages,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxSearches ?? 6 }],
+        // Базовый вариант поиска: у web_search_20260209 (динамическая фильтрация) модель читает страницы через
+        // выполнение кода, и в итоговом тексте нет цитат — тогда источники остаются пустыми и проверить факты нечем
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: opts.maxSearches ?? 6 }],
         output_config: { effort: "medium" },
       });
     inputTokens += msg.usage.input_tokens;
