@@ -27,10 +27,17 @@ const FAST_MODEL = process.env.ASDIC_FAST_MODEL ?? "claude-haiku-5-5";
 
 let _client: Anthropic | null = null;
 function client() {
-  if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN) {
-    throw new AIError("Не задан ключ Claude API (переменная ANTHROPIC_API_KEY). Добавьте его в настройки окружения.");
+  // ASDIC_ANTHROPIC_API_KEY — своё имя, чтобы не пересекаться с ANTHROPIC_* в средах, где их задаёт инструмент (например, Claude Code)
+  const apiKey = process.env.ASDIC_ANTHROPIC_API_KEY || process.env.ANTHROPIC_API_KEY;
+  if (!apiKey) {
+    throw new AIError("Не задан ключ Claude API (переменная ASDIC_ANTHROPIC_API_KEY или ANTHROPIC_API_KEY). Добавьте его в настройки окружения.");
   }
-  _client ??= new Anthropic({ timeout: 15 * 60 * 1000 });
+  // Адрес API задаётся явно: чужой ANTHROPIC_BASE_URL из окружения не должен уводить запросы платформы
+  _client ??= new Anthropic({
+    apiKey,
+    baseURL: process.env.ASDIC_ANTHROPIC_BASE_URL || "https://api.anthropic.com",
+    timeout: 15 * 60 * 1000,
+  });
   return _client;
 }
 
@@ -93,7 +100,9 @@ async function webResearch(opts: { system: string; parts: Part[]; maxSearches?: 
         ...fallbackParams(model),
         system: opts.system,
         messages,
-        tools: [{ type: "web_search_20260209", name: "web_search", max_uses: opts.maxSearches ?? 6 }],
+        // Базовый вариант поиска: у web_search_20260209 (динамическая фильтрация) модель читает страницы через
+        // выполнение кода, и в итоговом тексте нет цитат — тогда источники остаются пустыми и проверить факты нечем
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: opts.maxSearches ?? 6 }],
         output_config: { effort: "medium" },
       });
     inputTokens += msg.usage.input_tokens;
