@@ -8,7 +8,42 @@ export const users = pgTable("users", {
   email: text("email").notNull().unique(),
   name: text("name").notNull(),
   passwordHash: text("password_hash").notNull(),
+  /** Тариф: free | pro | team | consultant (см. src/lib/billing/tiers.ts) */
+  tier: text("tier").notNull().default("free"),
+  /** Кредиты тарифа: обновляются раз в месяц до нормы тарифа, не копятся */
+  creditsPlan: integer("credits_plan").notNull().default(0),
+  /** Купленные пакеты и стартовые кредиты: не сгорают. Может уйти в минус на последней операции */
+  creditsExtra: integer("credits_extra").notNull().default(30),
+  /** Когда в следующий раз пополнить кредиты тарифа */
+  creditsResetAt: timestamp("credits_reset_at", { withTimezone: true }),
+  paddleCustomerId: text("paddle_customer_id"),
+  paddleSubscriptionId: text("paddle_subscription_id"),
+  /** Статус подписки в Paddle: active | trialing | past_due | paused | canceled */
+  subscriptionStatus: text("subscription_status"),
+  /** Год или месяц: year | month */
+  billingInterval: text("billing_interval"),
   createdAt: ts("created_at"),
+});
+
+/** Движение кредитов. ref уникален: повтор вебхука или журнала не спишет и не начислит дважды */
+export const creditLedger = pgTable("credit_ledger", {
+  id: id(),
+  userId: text("user_id").notNull().references(() => users.id, { onDelete: "cascade" }),
+  /** Плюс начисление, минус списание */
+  delta: integer("delta").notNull(),
+  /** ai | subscription | pack | signup | admin | refill */
+  reason: text("reason").notNull(),
+  ref: text("ref").unique(),
+  note: text("note").notNull().default(""),
+  costUsd: text("cost_usd"),
+  createdAt: ts("created_at"),
+});
+
+/** Настройки приложения, которые админ задаёт из интерфейса (например, секрет вебхука Paddle) */
+export const appSettings = pgTable("app_settings", {
+  key: text("key").primaryKey(),
+  value: text("value").notNull(),
+  updatedAt: ts("updated_at"),
 });
 
 export const plans = pgTable("plans", {

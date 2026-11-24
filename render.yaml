@@ -21,6 +21,13 @@ services:
         sync: false
       - key: ADMIN_EMAILS
         sync: false
+      # Оплата через Paddle. Тестовый режим: sandbox, боевой: production
+      - key: PADDLE_ENV
+        value: sandbox
+      - key: PADDLE_API_KEY
+        sync: false
+      - key: PADDLE_CLIENT_TOKEN
+        sync: false
 
 databases:
   - name: asdic-db

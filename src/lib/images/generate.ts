@@ -3,6 +3,7 @@ import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
 import { storeFile } from "@/lib/sources";
 import { PROMPT_VERSION, withCallCtx } from "@/lib/ai/telemetry";
+import { chargeCall } from "@/lib/billing/credits";
 import { ASPECTS, ImageError, composePrompt, imageProvider, type Aspect } from "./provider";
 
 type Item = typeof schema.items.$inferSelect;
@@ -55,9 +56,10 @@ export async function generateVisuals(a: { planId: string; item: Item; userId: s
 }
 
 async function log(a: { planId: string; userId: string }, provider: string, model: string, cost: number, started: number, request: string, response: string, error?: string) {
+  const id = newId();
   try {
     await db.insert(schema.aiCalls).values({
-      id: newId(),
+      id,
       planId: a.planId,
       userId: a.userId,
       kind: "image",
@@ -73,4 +75,5 @@ async function log(a: { planId: string; userId: string }, provider: string, mode
   } catch (e) {
     console.error("ai_calls log failed", e);
   }
+  await chargeCall({ userId: a.userId, costUsd: cost, ref: id, kind: "image" });
 }
