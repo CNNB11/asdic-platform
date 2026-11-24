@@ -1,5 +1,7 @@
 import "server-only";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
+import { eq } from "drizzle-orm";
+import { db, schema } from "@/db";
 import path from "node:path";
 import { newId } from "./ids";
 
@@ -34,16 +36,29 @@ export function validateFile(name: string, bytes: Buffer): { ext: string; mime: 
   return { ext, mime };
 }
 
+/** Сохраняет файл в базе: диск на хостинге (Render) стирается при каждом перезапуске и засыпании */
 export async function storeFile(bytes: Buffer, ext: string) {
   const key = `${newId()}${ext}`;
-  await mkdir(uploadDir(), { recursive: true });
-  await writeFile(path.join(/*turbopackIgnore: true*/ uploadDir(), key), bytes);
+  await db.insert(schema.files).values({ key, data: bytes });
   return key;
 }
 
+/** Читает файл из базы, а старые файлы, сохранённые до переноса, с диска */
 export async function readStored(key: string) {
   if (key.includes("/") || key.includes("..")) throw new Error("bad key");
-  return readFile(path.join(/*turbopackIgnore: true*/ uploadDir(), key));
+  const [f] = await db.select({ data: schema.files.data }).from(schema.files).where(eq(schema.files.key, key));
+  if (f) return Buffer.from(f.data);
+  try {
+    return await readFile(path.join(/*turbopackIgnore: true*/ uploadDir(), key));
+  } catch {
+    throw new StoredFileMissing(key);
+  }
+}
+
+export class StoredFileMissing extends Error {
+  constructor(key: string) {
+    super(`Файл ${key} не найден: он хранился на диске сервера и стёрся при перезапуске`);
+  }
 }
 
 /** Извлекает текст. У PDF страницы размечены как [стр. N], чтобы находить цитаты по страницам. */

@@ -32,6 +32,8 @@ export interface ImageResult {
   costUsd: number;
   /** Пояснение автора макета: идея и на что опирался */
   notes?: string;
+  /** Палитры и шрифты борда для выбора */
+  meta?: import("@/db/schema").VisualMeta;
 }
 
 export interface ImageProvider {

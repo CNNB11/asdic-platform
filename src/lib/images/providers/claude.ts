@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { structured } from "@/lib/ai/provider";
 import { costUsd } from "@/lib/ai/telemetry";
+import type { VisualMeta, VisualPalette } from "@/db/schema";
 import { ImageError, type Aspect, type ImageProvider, type ImageRequest } from "../provider";
 import { sanitizeHtml, sanitizeSvg, stripInjected } from "../sanitize";
 import { catalogBlock, embeddedFontCss } from "../fonts";
@@ -103,6 +104,50 @@ const schema = (key: string) => ({
   additionalProperties: false,
 });
 
+const BOARD_SCHEMA = {
+  type: "object",
+  properties: {
+    html: { type: "string" },
+    notes: { type: "string" },
+    palettes: {
+      type: "array",
+      description: "Те же три палитры, что в борде, по порядку: brand, trend, counter",
+      items: {
+        type: "object",
+        properties: {
+          name: { type: "string" },
+          kind: { type: "string", enum: ["brand", "trend", "counter"] },
+          recommended: { type: "boolean" },
+          why: { type: "string", description: "Почему эта палитра: одна-две фразы, для контр-палитры от чьих цветов уходим" },
+          colors: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: { hex: { type: "string" }, role: { type: "string" }, name: { type: "string" } },
+              required: ["hex", "role", "name"],
+              additionalProperties: false,
+            },
+          },
+        },
+        required: ["name", "kind", "recommended", "why", "colors"],
+        additionalProperties: false,
+      },
+    },
+    fonts: {
+      type: "array",
+      description: "Шрифты борда: заголовки, текст и, если есть, акцент",
+      items: {
+        type: "object",
+        properties: { family: { type: "string" }, role: { type: "string" }, why: { type: "string" } },
+        required: ["family", "role", "why"],
+        additionalProperties: false,
+      },
+    },
+  },
+  required: ["html", "notes", "palettes", "fonts"],
+  additionalProperties: false,
+};
+
 export function claudeSvgProvider(): ImageProvider {
   return {
     id: "claude",
@@ -112,13 +157,13 @@ export function claudeSvgProvider(): ImageProvider {
     async generate(req) {
       const board = isBoard(req.kind);
       const { data, usage } = board
-        ? await structured<{ html: string; notes: string }>({
+        ? await structured<{ html: string; notes: string; palettes: VisualPalette[]; fonts: NonNullable<VisualMeta["fonts"]> }>({
             system: BOARD_SYSTEM,
             effort: "medium",
             maxTokens: 32000,
-            parts: [{ text: `${await context(req)}<task>Сделай бренд-борд по этой концепции.${variantNote(req)}\nВерни HTML в поле html и в notes одной-двумя фразами идею знака и на какие записи плана опирался.</task>` }],
-            schema: schema("html"),
-          }).then((r) => ({ data: { code: r.data.html, notes: r.data.notes }, usage: r.usage }))
+            parts: [{ text: `${await context(req)}<task>Сделай бренд-борд по этой концепции.${variantNote(req)}\nВерни HTML в поле html и в notes одной-двумя фразами идею знака и на какие записи плана опирался. Те же три палитры с HEX и ролями продублируй в palettes, а шрифты в fonts, чтобы человек выбрал из них.</task>` }],
+            schema: BOARD_SCHEMA,
+          }).then((r) => ({ data: { code: r.data.html, notes: r.data.notes, meta: { palettes: r.data.palettes, fonts: r.data.fonts } as VisualMeta | undefined }, usage: r.usage }))
         : await structured<{ svg: string; notes: string }>({
             system: SVG_SYSTEM,
             effort: "medium",
@@ -129,7 +174,7 @@ export function claudeSvgProvider(): ImageProvider {
               },
             ],
             schema: schema("svg"),
-          }).then((r) => ({ data: { code: r.data.svg, notes: r.data.notes }, usage: r.usage }));
+          }).then((r) => ({ data: { code: r.data.svg, notes: r.data.notes, meta: undefined as VisualMeta | undefined }, usage: r.usage }));
 
       const code = dropFontLinks(data.code);
       const font = await fontCssFor(code);
@@ -142,8 +187,21 @@ export function claudeSvgProvider(): ImageProvider {
         model: usage.model,
         costUsd: costUsd(usage.model, { input: usage.inputTokens, output: usage.outputTokens, cacheRead: 0, cacheWrite: 0, searches: 0 }),
         notes: data.notes,
+        meta: data.meta && cleanMeta(data.meta),
       };
     },
+  };
+}
+
+/** Оставляет только валидные HEX, чтобы карточки палитр и ссылка «Выбрать» не ломались */
+function cleanMeta(m: VisualMeta): VisualMeta {
+  const hex = (h: string) => (/^#?[0-9a-f]{6}$/i.test(h.trim()) ? `#${h.trim().replace(/^#/, "").toUpperCase()}` : null);
+  return {
+    palettes: (m.palettes ?? [])
+      .map((p) => ({ ...p, colors: p.colors.flatMap((c) => (hex(c.hex) ? [{ ...c, hex: hex(c.hex)! }] : [])).slice(0, 8) }))
+      .filter((p) => p.colors.length > 0)
+      .slice(0, 4),
+    fonts: (m.fonts ?? []).slice(0, 4),
   };
 }
 
