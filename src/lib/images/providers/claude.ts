@@ -2,7 +2,7 @@ import "server-only";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { structured } from "@/lib/ai/provider";
-import { costUsd } from "@/lib/ai/telemetry";
+import { usageCostUsd } from "@/lib/ai/telemetry";
 import type { VisualMeta, VisualPalette } from "@/db/schema";
 import { ImageError, type Aspect, type ImageProvider, type ImageRequest } from "../provider";
 import { sanitizeHtml, sanitizeSvg, stripInjected } from "../sanitize";
@@ -159,18 +159,23 @@ export function claudeSvgProvider(): ImageProvider {
       const { data, usage } = board
         ? await structured<{ html: string; notes: string; palettes: VisualPalette[]; fonts: NonNullable<VisualMeta["fonts"]> }>({
             system: BOARD_SYSTEM,
+            // Бренд-борд — главный визуал бренда: остаётся на самой сильной модели
+            tier: "top",
             effort: "medium",
             maxTokens: 32000,
-            parts: [{ text: `${await context(req)}<task>Сделай бренд-борд по этой концепции.${variantNote(req)}\nВерни HTML в поле html и в notes одной-двумя фразами идею знака и на какие записи плана опирался. Те же три палитры с HEX и ролями продублируй в palettes, а шрифты в fonts, чтобы человек выбрал из них.</task>` }],
+            // Контекст кэшируется: несколько направлений борда подряд читают его из кэша
+            parts: [{ text: await context(req), cache: true }, { text: `<task>Сделай бренд-борд по этой концепции.${variantNote(req)}\nВерни HTML в поле html и в notes одной-двумя фразами идею знака и на какие записи плана опирался. Те же три палитры с HEX и ролями продублируй в palettes, а шрифты в fonts, чтобы человек выбрал из них.</task>` }],
             schema: BOARD_SCHEMA,
           }).then((r) => ({ data: { code: r.data.html, notes: r.data.notes, meta: { palettes: r.data.palettes, fonts: r.data.fonts } as VisualMeta | undefined }, usage: r.usage }))
         : await structured<{ svg: string; notes: string }>({
             system: SVG_SYSTEM,
+            tier: "main",
             effort: "medium",
             maxTokens: 24000,
             parts: [
+              { text: await context(req), cache: true },
               {
-                text: `${await context(req)}<task>${KIND_TASK[req.kind ?? ""] ?? KIND_TASK.ad}\nРазмер холста: ${DIM[req.aspect][0]}×${DIM[req.aspect][1]} px (формат ${req.aspect}).${variantNote(req)}\nВерни SVG в поле svg и в notes одной-двумя фразами, какие решения принял и на какие записи плана опирался.</task>`,
+                text: `<task>${KIND_TASK[req.kind ?? ""] ?? KIND_TASK.ad}\nРазмер холста: ${DIM[req.aspect][0]}×${DIM[req.aspect][1]} px (формат ${req.aspect}).${variantNote(req)}\nВерни SVG в поле svg и в notes одной-двумя фразами, какие решения принял и на какие записи плана опирался.</task>`,
               },
             ],
             schema: schema("svg"),
@@ -185,7 +190,7 @@ export function claudeSvgProvider(): ImageProvider {
         mime: board ? "text/html" : "image/svg+xml",
         ext: board ? ".html" : ".svg",
         model: usage.model,
-        costUsd: costUsd(usage.model, { input: usage.inputTokens, output: usage.outputTokens, cacheRead: 0, cacheWrite: 0, searches: 0 }),
+        costUsd: usageCostUsd(usage),
         notes: data.notes,
         meta: data.meta && cleanMeta(data.meta),
       };
@@ -216,6 +221,7 @@ export async function editVisualCode(a: { code: string; mime: string; instructio
     system: `${board ? BOARD_SYSTEM : SVG_SYSTEM}
 
 Сейчас ты не делаешь визуал заново, а точечно правишь готовый. Меняй только то, о чём просят; всё остальное должно остаться символ в символ. Если правка касается цвета, шрифта или скорости движения, по возможности меняй переменные или классы в начале стиля, а не каждое место по отдельности.`,
+    tier: "main",
     effort: "medium",
     maxTokens: 16000,
     parts: [
@@ -252,6 +258,6 @@ export async function editVisualCode(a: { code: string; mime: string; instructio
     bytes: Buffer.from(code),
     notes: data.notes,
     model: usage.model,
-    costUsd: costUsd(usage.model, { input: usage.inputTokens, output: usage.outputTokens, cacheRead: 0, cacheWrite: 0, searches: 0 }),
+    costUsd: usageCostUsd(usage),
   };
 }

@@ -2,7 +2,7 @@ import "server-only";
 import Anthropic from "@anthropic-ai/sdk";
 import type { BetaContentBlockParam, BetaMessage, BetaMessageParam } from "@anthropic-ai/sdk/resources/beta/messages/messages";
 import { logCall, previewContent } from "../telemetry";
-import { AIError, type AIProvider, type Part, type ResearchResult, type StructuredRequest, type Usage, type WebFinding } from "../provider";
+import { AIError, type AIProvider, type Part, type ResearchResult, type StructuredRequest, type Tier, type Usage, type WebFinding } from "../provider";
 
 /** Единая точка вызова Claude: здесь журнал, сюда же позже можно подключить Langfuse */
 async function call(step: "structured" | "research", params: Parameters<Anthropic["beta"]["messages"]["stream"]>[0]): Promise<BetaMessage> {
@@ -20,10 +20,19 @@ async function call(step: "structured" | "research", params: Parameters<Anthropi
   }
 }
 
-/** Основная модель для анализа. Меняется переменной окружения без правки кода. */
-const MODEL = process.env.ASDIC_MODEL ?? "claude-opus-5-5";
-/** Быстрая модель для предобработки источников */
-const FAST_MODEL = process.env.ASDIC_FAST_MODEL ?? "claude-haiku-5-5";
+/**
+ * Модели по ступеням. Меняются переменными окружения без правки кода.
+ * Opus в 2 раза дороже Sonnet, поэтому он остаётся только там, где цена слабого ответа выше всего.
+ */
+const MODELS: Record<Tier, string> = {
+  top: process.env.ASDIC_TOP_MODEL ?? "claude-opus-5-5",
+  main: process.env.ASDIC_MODEL ?? "claude-sonnet-5-5",
+  fast: process.env.ASDIC_FAST_MODEL ?? "claude-haiku-5-5",
+};
+/** Модель онлайн-исследования: читает выдачу поиска и пишет конспект с цитатами */
+const RESEARCH_MODEL = process.env.ASDIC_RESEARCH_MODEL ?? MODELS.main;
+/** Сколько поисковых запросов можно сделать за одну операцию с интернетом */
+const MAX_SEARCHES = Number(process.env.ASDIC_MAX_SEARCHES ?? 4) || 4;
 
 let _client: Anthropic | null = null;
 function client() {
@@ -43,7 +52,22 @@ function client() {
 
 /** Части промпта → блоки Claude; cache = точка кэширования префикса */
 function toBlocks(parts: Part[]): BetaContentBlockParam[] {
-  return parts.map((p) => (p.cache ? { type: "text", text: p.text, cache_control: { type: "ephemeral" } } : { type: "text", text: p.text }));
+  return parts.map((p) =>
+    p.cache
+      ? { type: "text", text: p.text, cache_control: p.cache === "long" ? { type: "ephemeral", ttl: "1h" } : { type: "ephemeral" } }
+      : { type: "text", text: p.text },
+  );
+}
+
+function usageOf(model: string, u: BetaMessage["usage"]): Usage {
+  return {
+    model,
+    inputTokens: u.input_tokens,
+    outputTokens: u.output_tokens,
+    cacheReadTokens: u.cache_read_input_tokens ?? 0,
+    cacheWriteTokens: u.cache_creation_input_tokens ?? 0,
+    cacheWrite1hTokens: u.cache_creation?.ephemeral_1h_input_tokens ?? 0,
+  };
 }
 
 /** Модели с серверными fallback при отказе (у Haiku его нет) */
@@ -57,7 +81,7 @@ function betas(model: string) {
 
 /** Один вызов со строгой JSON-схемой ответа */
 async function structured<T>(opts: StructuredRequest): Promise<{ data: T; usage: Usage }> {
-  const model = opts.tier === "fast" ? FAST_MODEL : MODEL;
+  const model = MODELS[opts.tier ?? "main"];
   const msg = await call("structured", {
     model,
     max_tokens: opts.maxTokens ?? 32000,
@@ -79,34 +103,38 @@ async function structured<T>(opts: StructuredRequest): Promise<{ data: T; usage:
   } catch {
     throw new AIError("Модель вернула ответ в неверном формате. Повторите попытку.");
   }
-  return { data, usage: { model: msg.model, inputTokens: msg.usage.input_tokens, outputTokens: msg.usage.output_tokens } };
+  return { data, usage: usageOf(msg.model, msg.usage) };
 }
 
 /** Шаг исследования: Claude ищет в интернете и пишет конспект с цитатами найденных страниц */
 async function webResearch(opts: { system: string; parts: Part[]; maxSearches?: number }): Promise<ResearchResult> {
-  const model = MODEL;
+  const model = RESEARCH_MODEL;
   const messages: BetaMessageParam[] = [{ role: "user", content: toBlocks(opts.parts) }];
   const queries: string[] = [];
   const byUrl = new Map<string, WebFinding>();
   const notes: string[] = [];
-  let inputTokens = 0;
-  let outputTokens = 0;
+  const usage: Usage = { model, inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, cacheWrite1hTokens: 0 };
 
   for (let turn = 0; turn < 5; turn++) {
     const msg = await call("research", {
         model,
-        max_tokens: 32000,
+        // Конспект короткий: длинный лимит здесь не нужен
+        max_tokens: 12000,
         betas: betas(model),
         ...fallbackParams(model),
         system: opts.system,
         messages,
         // Базовый вариант поиска: у web_search_20260209 (динамическая фильтрация) модель читает страницы через
         // выполнение кода, и в итоговом тексте нет цитат — тогда источники остаются пустыми и проверить факты нечем
-        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: opts.maxSearches ?? 6 }],
+        tools: [{ type: "web_search_20250305", name: "web_search", max_uses: opts.maxSearches ?? MAX_SEARCHES }],
         output_config: { effort: "medium" },
       });
-    inputTokens += msg.usage.input_tokens;
-    outputTokens += msg.usage.output_tokens;
+    const u = usageOf(model, msg.usage);
+    usage.inputTokens += u.inputTokens;
+    usage.outputTokens += u.outputTokens;
+    usage.cacheReadTokens! += u.cacheReadTokens ?? 0;
+    usage.cacheWriteTokens! += u.cacheWriteTokens ?? 0;
+    usage.cacheWrite1hTokens! += u.cacheWrite1hTokens ?? 0;
 
     for (const b of msg.content) {
       if (b.type === "server_tool_use" && b.name === "web_search") {
@@ -138,7 +166,7 @@ async function webResearch(opts: { system: string; parts: Part[]; maxSearches?: 
   }
   // Сохраняем только страницы, из которых есть цитаты: только их можно проверить
   const findings = [...byUrl.values()].filter((f) => f.quotes.length > 0);
-  return { notes: notes.join(""), queries, findings, usage: { model, inputTokens, outputTokens } };
+  return { notes: notes.join(""), queries, findings, usage };
 }
 
 export function claudeProvider(): AIProvider {

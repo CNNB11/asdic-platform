@@ -47,11 +47,14 @@ export function systemPrompt(method: Method) {
 
 export function sourcesBlock(sources: SourceCtx[]): Part[] {
   if (sources.length === 0) return [{ text: "<sources>Загруженных источников нет.</sources>" }];
-  const body = sources
-    .map((s) => `<source id="${s.id}" title="${esc(s.title)}">\n${esc(s.text)}\n</source>`)
-    .join("\n\n");
-  // Источники стоят первыми и кэшируются: повторные операции по плану заметно дешевле
-  return [{ text: `<sources>\n${body}\n</sources>`, cache: true }];
+  // Каждый источник — отдельный блок, точка кэша на последнем, TTL час. Новый источник добавляется в конец,
+  // и API находит в кэше всё, что было до него (поиск совпадения идёт по границам блоков назад).
+  // Порядок источников должен быть стабильным (см. loadContext), иначе кэш не совпадёт.
+  const last = sources.length - 1;
+  return sources.map((s, i) => ({
+    text: `${i === 0 ? "<sources>\n" : ""}<source id="${s.id}" title="${esc(s.title)}">\n${esc(s.text)}\n</source>${i === last ? "\n</sources>" : ""}`,
+    ...(i === last ? { cache: "long" as const } : {}),
+  }));
 }
 
 export function sectionBlock(stage: Stage, section: Section) {
