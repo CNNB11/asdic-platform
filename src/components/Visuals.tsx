@@ -5,6 +5,7 @@ import { imageProvider } from "@/lib/images/provider";
 import { PendingNote, Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
 import { PaletteChoice } from "@/components/PaletteChoice";
+import { storedKeys } from "@/lib/sources";
 import { Cost } from "@/components/Cost";
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -46,6 +47,8 @@ export async function Visuals({
     ? await db.select({ values: schema.items.values }).from(schema.items).where(and(eq(schema.items.planId, planId), eq(schema.items.sectionKey, "brand")))
     : [];
   const taken = new Set(brandItems.map((b) => String(b.values.name ?? "").trim().toLowerCase()));
+  const present = await storedKeys(rows.map((r) => r.storageKey));
+  const lost = rows.filter((r) => !present.has(r.storageKey)).length;
   const spent = rows.reduce((n, r) => n + Number(r.costUsd), 0);
 
   return (
@@ -73,6 +76,11 @@ export async function Visuals({
       )}
       {edited && <p className="text-head">Правка готова: новая версия сверху, прежняя сохранена ниже.</p>}
       {error && <p className="text-red">{error}</p>}
+      {lost > 0 && (
+        <p className="card border-amber/50 px-4 py-3">
+          Утеряно файлов: {lost}. Раньше визуалы хранились на диске сервера и стёрлись при его перезапуске. Нажмите «{rows.length ? "Сделать ещё" : "Сверстать"}», новый вариант сохранится в базе и больше не пропадёт. Утерянные можно отклонить, чтобы они не мешали.
+        </p>
+      )}
 
       {provider && (
         <form action={generateVisual.bind(null, planId, item.id)} className="flex flex-wrap items-end gap-3">
