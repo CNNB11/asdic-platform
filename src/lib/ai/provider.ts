@@ -6,19 +6,30 @@ import "server-only";
  * адаптер российского провайдера или собственной модели на серверах в РФ — без правки операций.
  */
 
-/** Кусок промпта. cache = провайдер может закэшировать этот префикс (источники). */
+/**
+ * Кусок промпта. cache = провайдер может закэшировать этот префикс:
+ * true — на 5 минут (серия вызовов подряд), "long" — на час (источники плана, к которым возвращаются в течение сессии).
+ */
 export interface Part {
   text: string;
-  cache?: boolean;
+  cache?: boolean | "long";
 }
 
-/** main — основная модель анализа; fast — дешёвая для предобработки */
-export type Tier = "main" | "fast";
+/**
+ * top — самая сильная модель: красные решения (выбирает человек) и бренд-борды;
+ * main — основная рабочая модель: черновики, улучшения, проверка, поиск, макеты;
+ * fast — дешёвая для предобработки источников.
+ */
+export type Tier = "top" | "main" | "fast";
 
 export interface Usage {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  cacheReadTokens?: number;
+  cacheWriteTokens?: number;
+  /** Часть записи в кэш с TTL 1 час (стоит 2× вход вместо 1,25×) */
+  cacheWrite1hTokens?: number;
 }
 
 export interface StructuredRequest {

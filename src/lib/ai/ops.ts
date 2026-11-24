@@ -1,5 +1,5 @@
 import "server-only";
-import { and, eq } from "drizzle-orm";
+import { and, asc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
 import { locateQuote } from "@/lib/sources";
@@ -60,7 +60,12 @@ export interface CritiqueResult {
 async function loadContext(plan: Plan, method: Method, sectionKey: string, scope: Scope, excludeItemId?: string) {
   const { stage, section } = findSection(method, sectionKey);
   const [srcRows, itemRows] = await Promise.all([
-    db.select().from(schema.sources).where(and(eq(schema.sources.planId, plan.id), eq(schema.sources.status, "ready"))),
+    db
+      .select()
+      .from(schema.sources)
+      .where(and(eq(schema.sources.planId, plan.id), eq(schema.sources.status, "ready")))
+      // Стабильный порядок: без него Postgres может вернуть строки иначе, и кэш источников не сработает
+      .orderBy(asc(schema.sources.createdAt), asc(schema.sources.id)),
     db.select().from(schema.items).where(eq(schema.items.planId, plan.id)),
   ]);
   const stageKeys = new Set(stage.sections.map((s) => s.key));
@@ -106,7 +111,7 @@ async function research(plan: Plan, method: Method, section: Section, task: stri
   const parts: Part[] = [
     {
       text: `${planBlock(plan)}\n\n${sectionBlock(stage, section)}\n\n${guidanceBlock(guidance)}\n\n<task>${task}
-Найди в интернете актуальные и надёжные данные для этой задачи (рынок и регион компании, свежие исследования, официальные источники, отраслевые обзоры). Сделай 3–6 поисковых запросов. Затем кратко изложи, что нашёл, и обязательно опирайся на найденные страницы, чтобы у каждого факта была ссылка.</task>`,
+Найди в интернете актуальные и надёжные данные для этой задачи (рынок и регион компании, свежие исследования, официальные источники, отраслевые обзоры). Сделай 2–4 точных поисковых запроса. Затем кратко (до 400 слов) изложи, что нашёл, и обязательно опирайся на найденные страницы, чтобы у каждого факта была ссылка.</task>`,
     },
   ];
   const r = await webResearch({ system: systemPrompt(method), parts });
@@ -143,6 +148,12 @@ async function research(plan: Plan, method: Method, section: Section, task: stri
     research: { queries: r.queries, urls: r.findings.map((f) => ({ url: f.url, title: f.title })) },
     usage: r.usage,
   };
+}
+
+/** Обновлённые источники остаются на своих местах, новые идут в конец: так совпадает больше кэша */
+function mergeSources(base: SourceCtx[], fresh: SourceCtx[]) {
+  const byId = new Map(fresh.map((s) => [s.id, s]));
+  return [...base.map((s) => byId.get(s.id) ?? s), ...fresh.filter((s) => !base.some((b) => b.id === s.id))];
 }
 
 async function recordOp(o: {
@@ -219,7 +230,7 @@ export async function runDraft(a: {
         const r = await research(a.plan, a.method, section, `Нужно подготовить записи «${section.itemLabel}» для уровня «${section.title}».`, a.guidance, a.userId);
         usage.push(r.usage);
         const ids = new Set(sources.map((s) => s.id));
-        sources = [...sources.filter((s) => !r.sources.some((x) => x.id === s.id)), ...r.sources];
+        sources = mergeSources(sources, r.sources);
         r.sources.forEach((s) => ids.add(s.id));
         researchInfo = r.research;
         researchNotes = r.notes;
@@ -252,6 +263,8 @@ export async function runDraft(a: {
           system: systemPrompt(a.method),
           parts,
           schema: optionsSchema(section),
+          // Красный уровень: решение за человеком, варианты готовит самая сильная модель
+          tier: "top",
           effort: "high",
         });
         usage.push(u);
@@ -310,7 +323,7 @@ export async function runImprove(a: {
       if (a.web) {
         const r = await research(a.plan, a.method, section, `Нужно дополнить и уточнить запись «${title}» уровня «${section.title}». Текущее содержание: ${JSON.stringify(a.item.values)}`, a.guidance, a.userId);
         usage.push(r.usage);
-        sources = [...sources.filter((s) => !r.sources.some((x) => x.id === s.id)), ...r.sources];
+        sources = mergeSources(sources, r.sources);
         researchInfo = r.research;
         researchNotes = r.notes;
       }
@@ -378,7 +391,7 @@ export async function runCritique(a: { plan: Plan; method: Method; item: typeof 
           ].join("\n\n"),
         },
       ];
-      const { data, usage } = await structured<CritiqueResult>({ system: systemPrompt(a.method), parts, schema: critiqueSchema, effort: "high" });
+      const { data, usage } = await structured<CritiqueResult>({ system: systemPrompt(a.method), parts, schema: critiqueSchema, effort: "high", maxTokens: 16000 });
       return { result: data, usage: [usage] };
     },
   });
