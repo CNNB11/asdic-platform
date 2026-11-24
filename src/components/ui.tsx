@@ -121,9 +121,12 @@ export function ErrorNote({ text }: { text?: string | null }) {
   return <p className="rounded-lg border border-red/50 bg-red/10 px-3 py-2 text-sm text-head">{text}</p>;
 }
 
+// Часовой пояс дат на страницах. По умолчанию UTC+3 (Москва, Эр-Рияд); на сервере меняется переменной APP_TIME_ZONE.
+const TIME_ZONE = (typeof process !== "undefined" && process.env.APP_TIME_ZONE) || "Europe/Moscow";
+
 export function fmtDate(d: Date | string | null | undefined) {
   if (!d) return "";
-  return new Date(d).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "Europe/Zurich" });
+  return new Date(d).toLocaleString("ru-RU", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit", timeZone: TIME_ZONE });
 }
 
 export const OP_LABEL: Record<string, string> = {
