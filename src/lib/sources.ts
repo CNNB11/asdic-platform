@@ -1,6 +1,7 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
-import { eq } from "drizzle-orm";
+import { existsSync } from "node:fs";
+import { eq, inArray } from "drizzle-orm";
 import { db, schema } from "@/db";
 import path from "node:path";
 import { newId } from "./ids";
@@ -53,6 +54,15 @@ export async function readStored(key: string) {
   } catch {
     throw new StoredFileMissing(key);
   }
+}
+
+/** Какие из файлов ещё на месте: в базе или (старые) на диске сервера */
+export async function storedKeys(keys: string[]): Promise<Set<string>> {
+  if (keys.length === 0) return new Set();
+  const rows = await db.select({ key: schema.files.key }).from(schema.files).where(inArray(schema.files.key, keys));
+  const found = new Set(rows.map((r) => r.key));
+  for (const k of keys) if (!found.has(k) && !k.includes("/") && existsSync(path.join(/*turbopackIgnore: true*/ uploadDir(), k))) found.add(k);
+  return found;
 }
 
 export class StoredFileMissing extends Error {

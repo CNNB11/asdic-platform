@@ -9,6 +9,7 @@ import { deleteDocuments, generateDocument } from "@/app/actions";
 import { Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
 import { itemTitle } from "@/method";
+import { storedKeys } from "@/lib/sources";
 
 const FORMATS = [
   { f: "pdf", t: "PDF" },
@@ -29,6 +30,7 @@ export default async function DocumentsPage({ params, searchParams }: PageProps<
     .innerJoin(schema.items, eq(schema.items.id, schema.visuals.itemId))
     .where(and(eq(schema.visuals.planId, planId), ne(schema.visuals.verdict, "rejected")))
     .orderBy(desc(schema.visuals.createdAt));
+  const present = await storedKeys(visuals.map(({ v }) => v.storageKey));
   const visSection = method.stages.flatMap((s) => s.sections).find((s) => s.key === "visuals");
   const docs = await db.select().from(schema.documents).where(eq(schema.documents.planId, planId)).orderBy(desc(schema.documents.version));
   return (
@@ -54,6 +56,19 @@ export default async function DocumentsPage({ params, searchParams }: PageProps<
             {visuals.map(({ v, item }) => {
               const code = v.mime === "text/html" || v.mime === "image/svg+xml";
               const url = `/api/plans/${planId}/visuals/${v.id}`;
+              if (!present.has(v.storageKey))
+                return (
+                  <li key={v.id} className="flex flex-wrap items-center gap-x-4 gap-y-1 opacity-70">
+                    <span className="min-w-48 flex-1">
+                      {visSection ? itemTitle(visSection, item.values) : "Концепция"}
+                      <span className="cap"> · файл утерян при перезапуске сервера</span>
+                    </span>
+                    <span className="cap w-36">{fmtDate(v.createdAt)}</span>
+                    <Link href={`/plans/${planId}/items/${item.id}#visuals`} className="link">
+                      Сделать заново
+                    </Link>
+                  </li>
+                );
               return (
                 <li key={v.id} className="flex flex-wrap items-center gap-x-4 gap-y-1">
                   <Link href={`/plans/${planId}/items/${item.id}#visuals`} className="link min-w-48 flex-1">

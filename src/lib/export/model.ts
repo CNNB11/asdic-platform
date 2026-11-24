@@ -50,6 +50,27 @@ export async function buildStageModel(plan: typeof schema.plans.$inferSelect, me
     return order.get(sourceId)!;
   };
 
+  // Принятые бренд-борды: их палитры и шрифты попадают в документ текстом с HEX
+  const boards = stage.sections.some((x) => x.visuals)
+    ? (await db.select().from(schema.visuals).where(and(eq(schema.visuals.planId, plan.id), inArray(schema.visuals.verdict, ["accepted", "base"])))).filter((v) => v.meta)
+    : [];
+  const KIND: Record<string, string> = { brand: "бренд", trend: "по тренду", counter: "контр-палитра" };
+  const boardItems = (itemId: string): DocItem[] =>
+    boards
+      .filter((v) => v.itemId === itemId)
+      .map((v) => ({
+        title: `Бренд-борд от ${new Date(v.createdAt).toLocaleDateString("ru-RU")}`,
+        fields: [
+          ...(v.meta?.palettes ?? []).map((p) => ({
+            label: `Палитра «${p.name}», ${KIND[p.kind] ?? p.kind}${p.recommended ? ", рекомендуем" : ""}`,
+            value: `${p.colors.map((c) => `${c.hex} ${c.name ? `${c.name}, ` : ""}${c.role}`).join("; ")}. ${p.why}`,
+            refs: [],
+          })),
+          ...(v.meta?.fonts ?? []).map((f) => ({ label: `Шрифт: ${f.role}`, value: `${f.family}, бесплатный (Google Fonts). ${f.why}`, refs: [] })),
+        ],
+        status: { kind: "approved" as const, text: `${v.verdict === "accepted" ? "Принял(а)" : "Взял(а) как основу"} ${v.verdictBy ?? ""}`.trim() },
+      }));
+
   const outstanding: string[] = [];
   const sections = stage.sections.map((section) => {
     const st = sectionStatus(section, items);
@@ -82,6 +103,10 @@ export async function buildStageModel(plan: typeof schema.plans.$inferSelect, me
       const options = it.decision?.options.map((o, i) => ({ title: o.title, chosen: it.decision?.chosenIndex === i }));
       return { title, badge, fields, status, options };
     });
+    if (section.visuals) {
+      const withBoards = docItems.flatMap((d, i) => [d, ...boardItems(st.items[i].id)]);
+      docItems.splice(0, docItems.length, ...withBoards);
+    }
     return { title: section.title, mode: section.mode, modeLabel: MODE_LABEL[section.mode], description: section.description, items: docItems };
   });
 
