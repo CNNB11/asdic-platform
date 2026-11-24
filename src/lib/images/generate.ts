@@ -2,8 +2,7 @@ import "server-only";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
 import { storeFile } from "@/lib/sources";
-import { PROMPT_VERSION, withCallCtx } from "@/lib/ai/telemetry";
-import { chargeCall } from "@/lib/billing/credits";
+import { PROMPT_VERSION, addSpent, metered } from "@/lib/ai/telemetry";
 import { ASPECTS, ImageError, composePrompt, imageProvider, type Aspect } from "./provider";
 
 type Item = typeof schema.items.$inferSelect;
@@ -19,12 +18,11 @@ export async function generateVisuals(a: { planId: string; item: Item; userId: s
   const sent = p.selfLogged ? prompt : composePrompt(req, p.maxPrompt);
   const count = Math.min(4, Math.max(1, a.count));
   const results = await Promise.allSettled(
-    Array.from({ length: count }, async (_, i) => {
+    // Каждый вариант — отдельная операция: списывается, только если вариант получился
+    Array.from({ length: count }, (_, i) => metered({ planId: a.planId, userId: a.userId, kind: "image" }, "image", async () => {
       const started = Date.now();
       try {
-        const r = await withCallCtx({ planId: a.planId, userId: a.userId, kind: "image" }, () =>
-          p.generate({ ...req, seed: Math.floor(Math.random() * 1e9), variant: { n: i + 1, of: count } }),
-        );
+        const r = await p.generate({ ...req, seed: Math.floor(Math.random() * 1e9), variant: { n: i + 1, of: count } });
         const key = await storeFile(r.bytes, r.ext);
         await db.insert(schema.visuals).values({
           id: newId(),
@@ -46,7 +44,7 @@ export async function generateVisuals(a: { planId: string; item: Item; userId: s
         if (!p.selfLogged) await log(a, p.id, p.id, 0, started, sent, "", (e as Error).message);
         throw e;
       }
-    }),
+    })),
   );
   const failed = results.filter((r) => r.status === "rejected") as PromiseRejectedResult[];
   if (failed.length === count) {
@@ -76,5 +74,5 @@ async function log(a: { planId: string; userId: string }, provider: string, mode
   } catch (e) {
     console.error("ai_calls log failed", e);
   }
-  await chargeCall({ userId: a.userId, costUsd: cost, ref: id, kind: "image" });
+  addSpent(cost);
 }

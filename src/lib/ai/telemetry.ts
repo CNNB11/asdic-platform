@@ -2,7 +2,7 @@ import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
-import { chargeCall } from "@/lib/billing/credits";
+import { chargeOp } from "@/lib/billing/credits";
 
 /** Версия промптов: менять при каждой правке prompts.ts, чтобы сравнивать качество по журналу */
 export const PROMPT_VERSION = "2026-11-24.1";
@@ -12,11 +12,32 @@ export interface CallCtx {
   opId?: string;
   userId?: string;
   kind: string;
+  /** Себестоимость всех вызовов внутри операции, $; копится по мере вызовов */
+  spentUsd?: number;
 }
 
 const als = new AsyncLocalStorage<CallCtx>();
 export const withCallCtx = <T>(ctx: CallCtx, fn: () => Promise<T>) => als.run(ctx, fn);
 export const callCtx = () => als.getStore();
+
+/** Добавляет себестоимость к текущей операции (для провайдеров, которые пишут журнал сами) */
+export function addSpent(usd: number) {
+  const c = als.getStore();
+  if (c) c.spentUsd = (c.spentUsd ?? 0) + usd;
+}
+
+/**
+ * Платная ИИ-операция: выполняет fn и после успеха списывает фиксированную цену price (ключ из tiers.ts).
+ * Неудачная операция бесплатна. chargeIf: дополнительное условие списания (например, тренды из кэша бесплатны).
+ */
+export async function metered<T>(ctx: CallCtx, price: string, fn: () => Promise<T>, o?: { ref?: string; chargeIf?: (result: T, spentUsd: number) => boolean }): Promise<T> {
+  const c: CallCtx = { ...ctx, spentUsd: 0 };
+  const result = await als.run(c, fn);
+  if (!o?.chargeIf || o.chargeIf(result, c.spentUsd ?? 0)) {
+    await chargeOp({ userId: c.userId, kind: price, ref: o?.ref ?? c.opId ?? newId(), costUsd: c.spentUsd ?? 0 });
+  }
+  return result;
+}
 
 /** Цены Claude API, $ за 1M токенов (ноябрь 2026). Запись в кэш = 1,25 × вход на 5 минут, 2 × вход на час. */
 const PRICES: Record<string, { in: number; out: number; cacheRead: number }> = {
@@ -89,8 +110,7 @@ export async function logCall(r: CallRecord) {
   } catch (e) {
     console.error("ai_calls log failed", e);
   }
-  // Списываем кредиты по реальной себестоимости, даже если вызов закончился ошибкой после оплаты токенов
-  await chargeCall({ userId: ctx?.userId, costUsd: cost, ref: id, kind: ctx?.kind ?? "unknown" });
+  if (ctx) ctx.spentUsd = (ctx.spentUsd ?? 0) + cost;
 }
 
 /** Убирает полный текст источников из превью запроса: в журнал идёт только список */

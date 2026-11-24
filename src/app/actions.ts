@@ -11,7 +11,7 @@ import { newId } from "@/lib/ids";
 import { extractText, storeFile, validateFile } from "@/lib/sources";
 import { runCritique, runDraft, runImprove, summarizeSource, type DraftResult, type ImproveResult, type OptionsResult, type Scope } from "@/lib/ai/ops";
 import { buildStageMarkdown } from "@/lib/export/markdown";
-import { withCallCtx } from "@/lib/ai/telemetry";
+import { metered } from "@/lib/ai/telemetry";
 import { displayValue, findSection, type Section } from "@/method";
 import { ASDIC } from "@/method/asdic";
 import { CreditsError, canCreatePlan, ensureFor } from "@/lib/billing/credits";
@@ -229,7 +229,7 @@ export async function uploadSources(planId: string, _: FormState, fd: FormData):
       try {
         // Без кредитов файл всё равно загружается, только без краткого описания
         await ensureFor(user, "source_summary");
-        summary = await withCallCtx({ planId, userId: user.id, kind: "source_summary" }, () => summarizeSource(file.name, text));
+        summary = await metered({ planId, userId: user.id, kind: "source_summary" }, "source_summary", () => summarizeSource(file.name, text));
       } catch {
         summary = "";
       }
@@ -458,7 +458,10 @@ async function visualBrief(plan: typeof schema.plans.$inferSelect, method: typeo
   let trends = "";
   if (it.values.kind === "moodboard" || it.values.kind === "concept") {
     const { visualTrends } = await import("@/lib/images/trends");
-    trends = await withCallCtx({ planId: plan.id, userId, kind: "image_trends" }, () => visualTrends(plan, userId));
+    // Тренды ищутся раз в месяц на план; взятые из сохранённых или не найденные не списываются
+    trends = await metered({ planId: plan.id, userId, kind: "image_trends" }, "image_trends", () => visualTrends(plan, userId), {
+      chargeIf: (text, spent) => spent > 0 && text.length > 0,
+    });
   }
   return [
     planBlock(plan),
@@ -525,7 +528,7 @@ export async function editVisual(planId: string, visualId: string, fd: FormData)
       const { itemsBlock, planBlock } = await import("@/lib/ai/prompts");
       const all = await db.select().from(schema.items).where(eq(schema.items.planId, planId));
       const brief = `${planBlock(plan)}\n\n${itemsBlock(method, all.filter((x) => x.reviewStatus !== "unreviewed"))}`;
-      const r = await withCallCtx({ planId, userId: user.id, kind: "image_edit" }, async () =>
+      const r = await metered({ planId, userId: user.id, kind: "image_edit" }, "image_edit", async () =>
         editVisualCode({ code: (await readStored(v.storageKey)).toString("utf8"), mime: v.mime, instruction, brief }),
       );
       const key = await storeFile(r.bytes, v.mime === "text/html" ? ".html" : ".svg");
