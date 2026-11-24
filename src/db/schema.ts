@@ -1,4 +1,6 @@
-import { boolean, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, customType, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+
+const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
 const id = () => text("id").primaryKey();
 const ts = (n: string) => timestamp(n, { withTimezone: true }).notNull().defaultNow();
@@ -211,8 +213,29 @@ export const visuals = pgTable("visuals", {
   parentId: text("parent_id"),
   /** Пояснение автора макета (Claude): идея и опора на записи плана */
   notes: text("notes").notNull().default(""),
+  /** Структурные данные борда: палитры и шрифты, из которых человек выбирает */
+  meta: jsonb("meta").$type<VisualMeta>(),
   verdict: text("verdict").notNull().default("new"),
   verdictBy: text("verdict_by"),
   createdBy: text("created_by").notNull(),
+  createdAt: ts("created_at"),
+});
+
+export interface VisualPalette {
+  name: string;
+  kind: "brand" | "trend" | "counter";
+  recommended?: boolean;
+  why: string;
+  colors: { hex: string; role: string; name?: string }[];
+}
+export interface VisualMeta {
+  palettes?: VisualPalette[];
+  fonts?: { family: string; role: string; why: string }[];
+}
+
+/** Файлы (загрузки и визуалы) храним в базе: диск на хостинге стирается при перезапуске */
+export const files = pgTable("files", {
+  key: text("key").primaryKey(),
+  data: bytea("data").notNull(),
   createdAt: ts("created_at"),
 });

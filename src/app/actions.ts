@@ -89,10 +89,10 @@ export async function updatePlan(planId: string, fd: FormData) {
 
 // ---------- записи ----------
 
-function readValues(section: Section, fd: FormData) {
+function readValues(section: Section, fd: FormData, prefix = "f_") {
   const values: Record<string, unknown> = {};
   for (const f of section.fields) {
-    const raw = fd.get(`f_${f.key}`);
+    const raw = fd.get(`${prefix}${f.key}`);
     if (f.type === "bool") values[f.key] = raw === "on" || raw === "true";
     else values[f.key] = String(raw ?? "").trim();
   }
@@ -322,7 +322,9 @@ export async function applyDraft(planId: string, opId: string, fd: FormData) {
   const origin = op.kind === "draft_web" ? "ai_web" : "ai_sources";
   for (const i of picked) {
     const draft = r.items[i];
-    const values = { ...draft.values };
+    // Человек мог поправить поля прямо в ответе ИИ: берём то, что пришло из формы
+    const edited = fd.has(`d${i}__edit`) ? readValues(section, fd, `d${i}_`) : null;
+    const values = edited ? { ...draft.values, ...edited } : { ...draft.values };
     for (const k of uniq) {
       if (values[k] === true) {
         if (taken.has(k)) values[k] = false;
@@ -342,7 +344,7 @@ export async function applyDraft(planId: string, opId: string, fd: FormData) {
 }
 
 export async function applyImprove(planId: string, opId: string, fd: FormData) {
-  const { user } = await requirePlan(planId);
+  const { user, method } = await requirePlan(planId);
   const op = await loadOp(planId, opId);
   const r = op.result as ImproveResult;
   const [item] = await db.select().from(schema.items).where(and(eq(schema.items.id, op.itemId ?? ""), eq(schema.items.planId, planId)));
@@ -350,7 +352,13 @@ export async function applyImprove(planId: string, opId: string, fd: FormData) {
   const picked = new Set(fd.getAll("pick").map(String));
   const chosen = r.changes.filter((c) => picked.has(c.field));
   const values = { ...item.values };
-  for (const c of chosen) values[c.field] = c.proposed;
+  const { section } = findSection(method, op.sectionKey);
+  for (const c of chosen) {
+    // Предложение ИИ человек мог поправить прямо в ответе
+    const raw = fd.get(`p_${c.field}`);
+    const f = section.fields.find((x) => x.key === c.field);
+    values[c.field] = !fd.has(`p__${c.field}`) || !f ? c.proposed : f.type === "bool" ? raw === "on" || raw === "true" : String(raw ?? "").trim();
+  }
   if (chosen.length) {
     // Содержание поменял ИИ: запись снова требует проверки, а красное решение — новой подписи
     await db
@@ -534,6 +542,7 @@ export async function editVisual(planId: string, visualId: string, fd: FormData)
         model: r.model,
         costUsd: r.costUsd.toFixed(4),
         notes: `Правка: ${instruction}. ${r.notes}`,
+        meta: v.meta,
         createdBy: user.id,
       });
       q = "edited=1";

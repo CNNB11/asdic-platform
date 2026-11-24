@@ -38,6 +38,7 @@ export async function generateVisuals(a: { planId: string; item: Item; userId: s
           model: r.model,
           costUsd: r.costUsd.toFixed(4),
           notes: r.notes ?? "",
+          meta: r.meta ?? null,
           createdBy: a.userId,
         });
         if (!p.selfLogged) await log(a, p.id, r.model, r.costUsd, started, sent, `${r.mime}, ${r.bytes.length} байт`);

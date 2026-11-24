@@ -1,9 +1,10 @@
-import { desc, eq } from "drizzle-orm";
+import { and, desc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { editVisual, generateVisual, setVisualVerdict } from "@/app/actions";
 import { imageProvider } from "@/lib/images/provider";
 import { PendingNote, Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
+import { PaletteChoice } from "@/components/PaletteChoice";
 import { Cost } from "@/components/Cost";
 
 const VERDICT_LABEL: Record<string, string> = {
@@ -41,6 +42,10 @@ export async function Visuals({
   }
   const aspect = String(item.values.aspect || "1:1");
   const board = item.values.kind === "moodboard" || item.values.kind === "concept";
+  const brandItems = board
+    ? await db.select({ values: schema.items.values }).from(schema.items).where(and(eq(schema.items.planId, planId), eq(schema.items.sectionKey, "brand")))
+    : [];
+  const taken = new Set(brandItems.map((b) => String(b.values.name ?? "").trim().toLowerCase()));
   const spent = rows.reduce((n, r) => n + Number(r.costUsd), 0);
 
   return (
@@ -123,6 +128,10 @@ export async function Visuals({
                 />
               )}
               {v.notes && <p className="text-sm">{v.notes}</p>}
+              {v.meta && <PaletteChoice planId={planId} meta={v.meta} taken={taken} />}
+              {board && v.mime === "text/html" && !v.meta && (
+                <p className="cap">Карточки выбора палитры и шрифта появляются у бордов, сверстанных после обновления. Нажмите «Сделать ещё», чтобы получить их.</p>
+              )}
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <span className="flex flex-wrap gap-2">
                   <span className={`chip ${v.verdict === "accepted" || v.verdict === "base" ? "border-head text-head" : ""}`}>

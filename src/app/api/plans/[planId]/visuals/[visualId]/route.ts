@@ -1,7 +1,7 @@
 import { and, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { planForRoute } from "@/lib/route-auth";
-import { readStored } from "@/lib/sources";
+import { StoredFileMissing, readStored } from "@/lib/sources";
 import { VISUAL_CSP } from "@/lib/images/sanitize";
 
 export const runtime = "nodejs";
@@ -13,7 +13,17 @@ export async function GET(req: Request, ctx: RouteContext<"/api/plans/[planId]/v
   if (!plan) return new Response("Not found", { status: 404 });
   const [v] = await db.select().from(schema.visuals).where(and(eq(schema.visuals.id, visualId), eq(schema.visuals.planId, planId)));
   if (!v) return new Response("Not found", { status: 404 });
-  let bytes: Buffer = await readStored(v.storageKey);
+  let bytes: Buffer;
+  try {
+    bytes = await readStored(v.storageKey);
+  } catch (e) {
+    if (!(e instanceof StoredFileMissing)) throw e;
+    // Старые визуалы лежали на диске сервера, а он стирается при перезапуске хостинга
+    return new Response(
+      `<!doctype html><meta charset="utf-8"><body style="font:16px system-ui;padding:24px;color:#333">Этот файл сделан до переноса хранения в базу и стёрся при перезапуске сервера. Нажмите «Сделать ещё», чтобы сверстать заново: новые визуалы хранятся надёжно.</body>`,
+      { status: 410, headers: { "content-type": "text/html; charset=utf-8", "content-security-policy": VISUAL_CSP } },
+    );
+  }
   const sp = new URL(req.url).searchParams;
   let mime = v.mime;
   let ext = v.storageKey.slice(v.storageKey.lastIndexOf("."));

@@ -7,7 +7,7 @@ import { ackCritique, applyDraft, applyImprove, discardOp } from "@/app/actions"
 import type { CritiqueResult, DraftResult, ImproveResult, OptionsResult } from "@/lib/ai/ops";
 import { displayValue, itemTitle } from "@/method";
 import { Submit } from "@/components/Submit";
-import { EvidenceList, ModeChip, OP_LABEL, ValuesView, fmtDate } from "@/components/ui";
+import { EvidenceList, FieldInput, ModeChip, OP_LABEL, ValuesView, fmtDate } from "@/components/ui";
 
 const SEVERITY: Record<string, string> = { high: "серьёзно", medium: "заметно", low: "мелочь" };
 
@@ -163,18 +163,28 @@ export default async function OpPage({ params }: PageProps<"/plans/[planId]/ops/
           </div>
         ) : (
           <form action={applyDraft.bind(null, planId, op.id)} className="grid gap-4">
-            <p className="cap">Отметьте записи, которые стоит сохранить. Сохранённые записи появятся в плане со статусом «требует проверки».</p>
+            <p className="cap">Отметьте записи, которые стоит сохранить, и поправьте текст прямо здесь: сохранится то, что в полях. Сохранённые записи появятся в плане со статусом «требует проверки».</p>
             {r.items.map((it, i) => (
-              <label key={i} className="card flex cursor-pointer gap-4 p-5 has-[:checked]:border-head/60">
-                <input type="checkbox" name="pick" value={i} defaultChecked className="mt-1.5 size-4 shrink-0 accent-white" />
-                <div className="min-w-0 flex-1">
+              <div key={i} className="card grid gap-4 p-5 has-[[name=pick]:checked]:border-head/60">
+                <label className="flex cursor-pointer items-start gap-3">
+                  <input type="checkbox" name="pick" value={i} defaultChecked className="mt-1.5 size-4 shrink-0 accent-white" />
                   <h3>{itemTitle(section, it.values)}</h3>
-                  <div className="mt-3">
-                    <ValuesView section={section} values={it.values} evidence={it.evidence} compact />
-                  </div>
-                  {it.evidence.length === 0 && <p className="cap mt-3 text-amber">Без цитат из источников: проверьте факты сами.</p>}
+                </label>
+                <div className="grid gap-4">
+                  <input type="hidden" name={`d${i}__edit`} value="1" />
+                  {section.fields.map((f) => {
+                    const ev = it.evidence.filter((e) => e.field === f.key);
+                    return (
+                      <label key={f.key} className="grid gap-1.5">
+                        <span className="cap">{f.label}</span>
+                        <FieldInput f={f} value={it.values[f.key]} name={`d${i}_${f.key}`} />
+                        {ev.length > 0 && <EvidenceList ev={ev} />}
+                      </label>
+                    );
+                  })}
                 </div>
-              </label>
+                {it.evidence.length === 0 && <p className="cap text-amber">Без цитат из источников: проверьте факты сами.</p>}
+              </div>
             ))}
             <div className="flex flex-wrap gap-3">
               <Submit>Сохранить выбранные</Submit>
@@ -211,26 +221,31 @@ export default async function OpPage({ params }: PageProps<"/plans/[planId]/ops/
           </div>
         ) : (
           <form action={applyImprove.bind(null, planId, op.id)} className="grid gap-4">
-            {r.changes.map((c) => (
-              <label key={c.field} className="card flex cursor-pointer gap-4 p-5 has-[:checked]:border-head/60">
-                <input type="checkbox" name="pick" value={c.field} defaultChecked className="mt-1.5 size-4 shrink-0 accent-white" />
-                <div className="grid min-w-0 flex-1 gap-3">
-                  <h3>{label(c.field)}</h3>
+            <p className="cap">Предложенный текст можно поправить прямо здесь: применится то, что в поле.</p>
+            {r.changes.map((c) => {
+              const f = section.fields.find((x) => x.key === c.field);
+              return (
+                <div key={c.field} className="card grid gap-3 p-5 has-[[name=pick]:checked]:border-head/60">
+                  <label className="flex cursor-pointer items-start gap-3">
+                    <input type="checkbox" name="pick" value={c.field} defaultChecked className="mt-1.5 size-4 shrink-0 accent-white" />
+                    <h3>{label(c.field)}</h3>
+                  </label>
                   <div className="grid gap-3 md:grid-cols-2">
                     <div>
                       <div className="cap">Сейчас</div>
                       <p className="mt-1 whitespace-pre-wrap">{displayValue(section, c.field, c.current) || "пусто"}</p>
                     </div>
-                    <div>
-                      <div className="cap">Предлагается</div>
-                      <p className="mt-1 whitespace-pre-wrap text-head">{displayValue(section, c.field, c.proposed)}</p>
-                    </div>
+                    <label className="grid content-start gap-1">
+                      <span className="cap">Предлагается</span>
+                      {f && <input type="hidden" name={`p__${c.field}`} value="1" />}
+                      {f ? <FieldInput f={f.type === "text" ? { ...f, type: "longtext" } : f} value={c.proposed} name={`p_${c.field}`} /> : <p className="mt-1 whitespace-pre-wrap text-head">{String(c.proposed)}</p>}
+                    </label>
                   </div>
                   <p className="cap">Почему: {c.rationale}</p>
                   {c.evidence.length > 0 && <EvidenceList ev={c.evidence} />}
                 </div>
-              </label>
-            ))}
+              );
+            })}
             <div className="flex flex-wrap gap-3">
               <Submit>Применить выбранное</Submit>
               <Link href={back} className="btn btn-ghost">
