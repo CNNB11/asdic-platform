@@ -46,6 +46,7 @@
 | `ADMIN_EMAILS` | нет | Почты через запятую, кому открыт журнал ИИ |
 | `SIGNUP_CODE` | нет | Если задан, регистрация только по этому коду |
 | `UPLOAD_DIR` | нет | Папка для файлов, по умолчанию `./data/uploads` |
+| `APP_TIME_ZONE` | нет | Часовой пояс дат на страницах, по умолчанию `Europe/Moscow` (UTC+3) |
 | `CHROMIUM_PATH` | нет | Chromium для PDF, по умолчанию `/opt/pw-browsers/chromium` |
 
 ## Запуск локально
