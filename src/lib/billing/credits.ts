@@ -2,7 +2,7 @@ import "server-only";
 import { and, count, eq, isNotNull, lte, sql } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
-import { creditsFor, estimate, fmtCredits, tierOf } from "./tiers";
+import { chargeFor, estimate, fmtCredits, tierOf } from "./tiers";
 
 type User = typeof schema.users.$inferSelect;
 
@@ -71,19 +71,19 @@ export async function ensureCredits(user: Pick<User, "id" | "email">, need: numb
 export const ensureFor = (user: Pick<User, "id" | "email">, kind: string, times = 1) => ensureCredits(user, estimate(kind) * times);
 
 /**
- * Списание за один вызов ИИ по реальной себестоимости. Сначала тратятся кредиты тарифа, потом купленные.
- * ref = id записи журнала: повтор не спишет дважды. Ошибки не ломают основную операцию.
+ * Списание за успешную ИИ-операцию по фиксированной цене (см. tiers.ts). Сначала тратятся кредиты тарифа, потом купленные.
+ * ref уникален для операции: повтор не спишет дважды. Ошибки не ломают основную операцию.
  */
-export async function chargeCall(a: { userId: string | null | undefined; costUsd: number; ref: string; kind: string }) {
-  if (!a.userId || a.costUsd <= 0) return;
-  const n = creditsFor(a.costUsd);
+export async function chargeOp(a: { userId: string | null | undefined; kind: string; ref: string; costUsd: number }) {
+  if (!a.userId) return;
+  const n = chargeFor(a.kind, a.costUsd);
   try {
     const [u] = await db.select({ email: schema.users.email }).from(schema.users).where(eq(schema.users.id, a.userId));
     if (!u || isAdminEmail(u.email)) return;
     await db.transaction(async (tx) => {
       const ins = await tx
         .insert(schema.creditLedger)
-        .values({ id: newId(), userId: a.userId!, delta: -n, reason: "ai", ref: `call:${a.ref}`, note: a.kind, costUsd: a.costUsd.toFixed(5) })
+        .values({ id: newId(), userId: a.userId!, delta: -n, reason: "ai", ref: `op:${a.ref}`, note: a.kind, costUsd: a.costUsd.toFixed(5) })
         .onConflictDoNothing()
         .returning({ id: schema.creditLedger.id });
       if (!ins.length) return;

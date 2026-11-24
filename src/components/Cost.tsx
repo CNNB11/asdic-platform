@@ -8,17 +8,17 @@ export async function Cost({ kind, times = 1, note }: { kind: string; times?: nu
   const user = await requireUser();
   const w = await wallet(user.id);
   const need = estimate(kind) * times;
-  if (w.unlimited) return <p className="cap">Стоимость около {fmtCredits(need)}. Для админа бесплатно.</p>;
+  if (w.unlimited) return <p className="cap">Стоимость {fmtCredits(need)}. Для админа бесплатно.</p>;
   const short = w.total < need;
   return (
     <p className={`cap ${short ? "text-red" : ""}`}>
-      {note ?? "Стоимость"} около {fmtCredits(need)} · у вас {fmtCredits(Math.max(0, w.total))}.{" "}
+      {note ?? "Стоимость"} {fmtCredits(need)} · у вас {fmtCredits(Math.max(0, w.total))}.{" "}
       {short ? (
         <Link href="/billing" className="link">
           Пополнить
         </Link>
       ) : (
-        "Точная сумма спишется по факту."
+        "Спишется только при успехе."
       )}
     </p>
   );

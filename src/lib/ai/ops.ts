@@ -5,7 +5,8 @@ import { newId } from "@/lib/ids";
 import { locateQuote } from "@/lib/sources";
 import { findSection, itemTitle, type Method, type Section } from "@/method";
 import { AIError, structured, webResearch, type Part, type Usage } from "./provider";
-import { withCallCtx } from "./telemetry";
+import { metered } from "./telemetry";
+import { draftKind } from "@/lib/billing/tiers";
 import {
   critiqueSchema,
   draftSchema,
@@ -164,6 +165,8 @@ async function recordOp(o: {
   guidance: string;
   scope: Scope;
   userId: string;
+  /** Ключ цены в кредитах, если отличается от kind */
+  price?: string;
   run: () => Promise<{ result: unknown; usage: Usage[] }>;
 }) {
   const id = newId();
@@ -179,7 +182,7 @@ async function recordOp(o: {
     createdBy: o.userId,
   });
   try {
-    const { result, usage } = await withCallCtx({ planId: o.plan.id, opId: id, userId: o.userId, kind: o.kind }, o.run);
+    const { result, usage } = await metered({ planId: o.plan.id, opId: id, userId: o.userId, kind: o.kind }, o.price ?? o.kind, o.run);
     await db
       .update(schema.aiOps)
       .set({
@@ -216,6 +219,7 @@ export async function runDraft(a: {
   return recordOp({
     plan: a.plan,
     kind,
+    price: draftKind(red, a.web),
     sectionKey: a.sectionKey,
     guidance: a.guidance,
     scope: a.scope,

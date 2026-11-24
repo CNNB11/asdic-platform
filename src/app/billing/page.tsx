@@ -4,7 +4,8 @@ import { db, schema } from "@/db";
 import { requireUser } from "@/lib/auth";
 import { wallet } from "@/lib/billing/credits";
 import { paddleConfig, paddleReady, priceIds } from "@/lib/billing/paddle";
-import { CREDIT_USD, PACKS, TIERS, estimate, fmtCredits, type PriceKey } from "@/lib/billing/tiers";
+import { CREDIT_USD, PACKS, TIERS, estimate, fmtCredits, planCost, type PriceKey } from "@/lib/billing/tiers";
+import { ASDIC } from "@/method/asdic";
 import { CheckoutButton } from "@/components/Checkout";
 import { TopBar } from "@/components/TopBar";
 import { fmtDate } from "@/components/ui";
@@ -43,6 +44,9 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
   }
   const canPay = paddleReady() && prices.size > 0;
   const hasSub = Boolean(user.paddleSubscriptionId && ["active", "trialing", "past_due"].includes(user.subscriptionStatus ?? ""));
+  const full = planCost(ASDIC);
+  const levels = ASDIC.stages.reduce((n, st) => n + st.sections.length, 0);
+  const round = (n: number) => Math.round(n / 10) * 10;
   const history = await db.select().from(schema.creditLedger).where(eq(schema.creditLedger.userId, user.id)).orderBy(desc(schema.creditLedger.createdAt)).limit(30);
 
   return (
@@ -94,7 +98,7 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
           <div className="card p-5">
             <div className="cap">Как считается</div>
             <p className="mt-1 text-sm">
-              1 кредит = ${CREDIT_USD.toFixed(2)}. Каждая ИИ-операция списывает кредиты по своей реальной стоимости. Цену вы видите перед запуском. Когда кредиты кончаются, ИИ останавливается, а всё сделанное остаётся.
+              1 кредит = ${CREDIT_USD.toFixed(2)}. У каждой ИИ-операции своя цена в кредитах, вы видите её перед запуском. Неудачная операция бесплатна. Когда кредиты кончаются, ИИ останавливается, а всё сделанное остаётся.
             </p>
           </div>
         </section>
@@ -111,6 +115,9 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
               </Link>
             </div>
           </div>
+          <p className="mt-2 text-sm">
+            Ориентир: план целиком ({levels} уровней, по черновику ИИ на каждый) стоит ≈ {round(full.min)}–{round(full.typical)} кредитов. Меньшая цифра, если всё строится по вашим материалам; большая, если анализ рынка ИИ делает с поиском в интернете и сверстает бренд-борд.
+          </p>
           {!canPay && <p className="cap mt-2">Оплата скоро заработает.{payErr ? ` (${payErr})` : ""}</p>}
           <div className="mt-5 grid gap-4 md:grid-cols-2 lg:grid-cols-4">
             {TIERS.map((t) => {
@@ -180,12 +187,12 @@ export default async function BillingPage({ searchParams }: PageProps<"/billing"
                 {Object.entries(KIND).map(([k, label]) => (
                   <tr key={k} className="border-b border-line">
                     <td className="py-1.5 pr-3">{label}</td>
-                    <td className="py-1.5 text-right text-head">≈ {estimate(k)}</td>
+                    <td className="py-1.5 text-right text-head">{estimate(k)}</td>
                   </tr>
                 ))}
               </tbody>
             </table>
-            <p className="cap mt-2">Это средние цены. Точная сумма зависит от объёма материалов и считается по факту.</p>
+            <p className="cap mt-2">Цены фиксированные. Только если операция вышла необычно большой (например, сотни страниц документов), спишется больше, по её фактической стоимости.</p>
           </div>
           <div>
             <h3>История</h3>
