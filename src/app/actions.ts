@@ -14,6 +14,8 @@ import { buildStageMarkdown } from "@/lib/export/markdown";
 import { withCallCtx } from "@/lib/ai/telemetry";
 import { displayValue, findSection, type Section } from "@/method";
 import { ASDIC } from "@/method/asdic";
+import { CreditsError, canCreatePlan, ensureFor } from "@/lib/billing/credits";
+import { SIGNUP_CREDITS, draftKind } from "@/lib/billing/tiers";
 
 export type FormState = { error?: string } | undefined;
 
@@ -30,7 +32,8 @@ export async function signup(_: FormState, fd: FormData): Promise<FormState> {
   const [exists] = await db.select().from(schema.users).where(eq(schema.users.email, email));
   if (exists) return { error: "Такая почта уже зарегистрирована" };
   const id = newId();
-  await db.insert(schema.users).values({ id, email, name, passwordHash: await bcrypt.hash(password, 10) });
+  await db.insert(schema.users).values({ id, email, name, passwordHash: await bcrypt.hash(password, 10), creditsExtra: SIGNUP_CREDITS });
+  await db.insert(schema.creditLedger).values({ id: newId(), userId: id, delta: SIGNUP_CREDITS, reason: "signup", note: "Стартовые кредиты" });
   await createSession(id);
   redirect("/plans");
 }
@@ -53,6 +56,7 @@ export async function logout() {
 
 export async function createPlan(fd: FormData) {
   const user = await requireUser();
+  if (!(await canCreatePlan(user))) redirect("/billing?limit=plans");
   const title = String(fd.get("title") ?? "").trim() || "Новый план";
   const id = newId();
   await db.insert(schema.plans).values({
@@ -223,6 +227,8 @@ export async function uploadSources(planId: string, _: FormState, fd: FormData):
       const key = await storeFile(bytes, ext);
       let summary = "";
       try {
+        // Без кредитов файл всё равно загружается, только без краткого описания
+        await ensureFor(user, "source_summary");
         summary = await withCallCtx({ planId, userId: user.id, kind: "source_summary" }, () => summarizeSource(file.name, text));
       } catch {
         summary = "";
@@ -260,8 +266,21 @@ function scopeOf(fd: FormData): Scope {
   return s === "stage" || s === "none" ? s : "plan";
 }
 
+/** Проверка кредитов перед ИИ-операцией: при нехватке ведём на страницу тарифа */
+async function gate(user: { id: string; email: string }, kind: string, times = 1) {
+  let need: number | null = null;
+  try {
+    await ensureFor(user, kind, times);
+  } catch (e) {
+    if (!(e instanceof CreditsError)) throw e;
+    need = e.need;
+  }
+  if (need != null) redirect(`/billing?need=${need}`);
+}
+
 export async function startDraft(planId: string, sectionKey: string, web: boolean, fd: FormData) {
   const { user, plan, method } = await requirePlan(planId);
+  await gate(user, draftKind(findSection(method, sectionKey).section.mode === "red", web));
   const opId = await runDraft({ plan, method, sectionKey, web, guidance: String(fd.get("guidance") ?? ""), scope: scopeOf(fd), userId: user.id });
   redirect(`/plans/${planId}/ops/${opId}`);
 }
@@ -270,6 +289,7 @@ export async function startImprove(planId: string, itemId: string, web: boolean,
   const { user, plan, method } = await requirePlan(planId);
   const [item] = await db.select().from(schema.items).where(and(eq(schema.items.id, itemId), eq(schema.items.planId, planId)));
   if (!item) redirect(`/plans/${planId}`);
+  await gate(user, web ? "improve_web" : "improve_sources");
   const opId = await runImprove({ plan, method, item, web, guidance: String(fd.get("guidance") ?? ""), scope: scopeOf(fd), userId: user.id });
   redirect(`/plans/${planId}/ops/${opId}`);
 }
@@ -278,6 +298,7 @@ export async function startCritique(planId: string, itemId: string) {
   const { user, plan, method } = await requirePlan(planId);
   const [item] = await db.select().from(schema.items).where(and(eq(schema.items.id, itemId), eq(schema.items.planId, planId)));
   if (!item) redirect(`/plans/${planId}`);
+  await gate(user, "critique");
   const opId = await runCritique({ plan, method, item, userId: user.id });
   redirect(`/plans/${planId}/ops/${opId}`);
 }
@@ -453,10 +474,12 @@ export async function generateVisual(planId: string, itemId: string, fd: FormDat
   const [it] = await db.select().from(schema.items).where(and(eq(schema.items.id, itemId), eq(schema.items.planId, planId)));
   if (!it || !findSection(method, it.sectionKey).section.visuals) redirect(`/plans/${planId}`);
   const { generateVisuals } = await import("@/lib/images/generate");
-  const brief = await visualBrief(plan, method, it, user.id);
+  const count = Math.min(4, Math.max(1, Number(fd.get("count") ?? 1) || 1));
   let q: string;
   try {
-    const r = await generateVisuals({ planId, item: it, userId: user.id, count: Number(fd.get("count") ?? 1) || 1, aspect: String(fd.get("aspect") ?? ""), brief });
+    await ensureFor(user, "image", count);
+    const brief = await visualBrief(plan, method, it, user.id);
+    const r = await generateVisuals({ planId, item: it, userId: user.id, count, aspect: String(fd.get("aspect") ?? ""), brief });
     q = `made=${r.made}${r.failed ? `&failed=${r.failed}` : ""}`;
   } catch (e) {
     q = `verr=${encodeURIComponent((e as Error).message.slice(0, 400))}`;
@@ -496,6 +519,7 @@ export async function editVisual(planId: string, visualId: string, fd: FormData)
   else if (v.mime !== "text/html" && v.mime !== "image/svg+xml") q = `verr=${encodeURIComponent("Точечная правка работает только для визуалов, сверстанных Claude")}`;
   else {
     try {
+      await ensureFor(user, "image_edit");
       const { editVisualCode } = await import("@/lib/images/providers/claude");
       const { readStored, storeFile } = await import("@/lib/sources");
       const { itemsBlock, planBlock } = await import("@/lib/ai/prompts");

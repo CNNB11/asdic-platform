@@ -41,7 +41,7 @@ export default async function AiLogPage({ searchParams }: PageProps<"/admin/ai">
   return (
     <>
       <TopBar userName={user.name}>
-        <span className="text-head">Журнал ИИ</span>
+        <span className="text-head">Журнал ИИ</span> <a href="/admin/billing" className="cap link ml-3">Оплата</a>
       </TopBar>
       <main className="mx-auto grid max-w-7xl gap-8 px-4 py-8 md:px-6">
         <div className="flex flex-wrap items-baseline justify-between gap-3">

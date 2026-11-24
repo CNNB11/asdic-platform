@@ -2,6 +2,7 @@ import "server-only";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
+import { chargeCall } from "@/lib/billing/credits";
 
 /** Версия промптов: менять при каждой правке prompts.ts, чтобы сравнивать качество по журналу */
 export const PROMPT_VERSION = "2026-11-23.1";
@@ -52,9 +53,11 @@ export async function logCall(r: CallRecord) {
     cacheWrite: r.usage?.cache_creation_input_tokens ?? 0,
     searches: r.usage?.server_tool_use?.web_search_requests ?? 0,
   };
+  const id = newId();
+  const cost = costUsd(r.model, u);
   try {
     await db.insert(schema.aiCalls).values({
-      id: newId(),
+      id,
       planId: ctx?.planId ?? null,
       opId: ctx?.opId ?? null,
       userId: ctx?.userId ?? null,
@@ -67,7 +70,7 @@ export async function logCall(r: CallRecord) {
       cacheReadTokens: u.cacheRead,
       cacheWriteTokens: u.cacheWrite,
       webSearches: u.searches,
-      costUsd: costUsd(r.model, u).toFixed(5),
+      costUsd: cost.toFixed(5),
       durationMs: Date.now() - r.started,
       stopReason: r.stopReason ?? null,
       error: r.error ?? null,
@@ -77,6 +80,8 @@ export async function logCall(r: CallRecord) {
   } catch (e) {
     console.error("ai_calls log failed", e);
   }
+  // Списываем кредиты по реальной себестоимости, даже если вызов закончился ошибкой после оплаты токенов
+  await chargeCall({ userId: ctx?.userId, costUsd: cost, ref: id, kind: ctx?.kind ?? "unknown" });
 }
 
 /** Убирает полный текст источников из превью запроса: в журнал идёт только список */

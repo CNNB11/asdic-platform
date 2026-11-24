@@ -5,6 +5,7 @@ import { capabilities } from "@/lib/ai/provider";
 import { itemTitle } from "@/method";
 import { PendingNote, Submit } from "@/components/Submit";
 import { ScopePicker } from "@/components/ui";
+import { Cost } from "@/components/Cost";
 
 /** Улучшение записи: по источникам или с поиском в интернете */
 export default async function ItemAiPage({ params, searchParams }: PageProps<"/plans/[planId]/items/[itemId]/ai">) {
@@ -33,6 +34,7 @@ export default async function ItemAiPage({ params, searchParams }: PageProps<"/p
           <textarea name="guidance" rows={4} className="field" maxLength={4000} placeholder="Например: добавить цифры по рынку, уточнить сегмент" />
         </label>
         <ScopePicker />
+        <Cost kind={web ? "improve_web" : "improve_sources"} />
         <div>
           <div className="flex flex-wrap gap-3">
             <Submit pending="ИИ работает…">Предложить улучшения</Submit>

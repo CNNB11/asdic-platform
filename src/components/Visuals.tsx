@@ -5,6 +5,7 @@ import { imageProvider } from "@/lib/images/provider";
 import { PendingNote, Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
 import { PaletteChoice } from "@/components/PaletteChoice";
+import { Cost } from "@/components/Cost";
 
 const VERDICT_LABEL: Record<string, string> = {
   new: "Ждёт решения",
@@ -96,6 +97,9 @@ export async function Visuals({
           <div>
             <Submit pending={board ? "Claude верстает бренд-борд…" : "Claude верстает макет…"}>{rows.length ? "Сделать ещё" : board ? "Сверстать бренд-борд" : "Сверстать макет"}</Submit>
             <PendingNote text={board ? "Бренд-борд занимает 1–3 минуты. Не закрывайте страницу." : "Макет занимает до минуты. Не закрывайте страницу."} />
+          </div>
+          <div className="basis-full">
+            <Cost kind="image" note="Один вариант стоит" />
           </div>
         </form>
       )}
