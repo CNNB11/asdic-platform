@@ -173,11 +173,30 @@ a{color:var(--ink)}
 .fs:nth-child(2) .fb{background:color-mix(in srgb,var(--a) 80%,#fff)}.fs:nth-child(3) .fb{background:color-mix(in srgb,var(--a) 62%,#fff)}
 .fn{font-size:8.5pt;color:var(--mut)}.fn b{color:var(--ink);font-size:11pt}
 .opener h1{margin-top:2mm}
+.webnav{display:none}.gwrap{overflow-x:auto}
+@media screen{
+html{scroll-behavior:smooth;scroll-padding-top:64px}
+body{background:#eeeeec;font-size:15px}
+.webnav{display:flex;position:sticky;top:0;z-index:20;gap:18px;align-items:center;justify-content:space-between;padding:10px 24px;background:rgba(255,255,255,.92);backdrop-filter:blur(8px);border-bottom:1px solid var(--line);font-size:13px}
+.webnav .brand{display:flex;align-items:center;gap:10px;color:var(--ink);white-space:nowrap}.webnav img{height:26px}
+.webnav b{color:var(--red);border:1px solid var(--red);padding:1px 8px;font-size:11px;letter-spacing:.12em;text-transform:uppercase}
+.webnav .links{display:flex;gap:16px;overflow-x:auto;scrollbar-width:none}.webnav .links a{color:var(--mut);text-decoration:none;white-space:nowrap}.webnav .links a:hover{color:var(--ink)}
+.doc{max-width:900px;margin:28px auto 80px;padding:0 16px}
+.doc>section,.doc>.cover{background:#fff;padding:56px 64px;margin:0 0 24px;border-radius:14px;box-shadow:0 1px 2px rgba(0,0,0,.04),0 8px 30px rgba(0,0,0,.05)}
+.cover{height:auto;min-height:620px;width:auto}
+.opener{break-before:auto;padding-top:0}
+.kpi,.card,.call,article{transition:transform .15s}.kpi:hover,.card:hover{transform:translateY(-2px)}
+.bar .track{border-radius:4px;overflow:hidden}
+.gantt tr:hover td{background:var(--soft)}
+.wm span{font-size:90px}
+@media (max-width:700px){body .doc>.cover{padding-left:44px}.cover .stamp{position:static;display:inline-block;justify-self:start;margin-bottom:14px;transform:none}.webnav{padding:10px 16px}.webnav .brand{min-width:0;flex-wrap:wrap}.webnav .brand>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40vw}.webnav b{font-size:9px}.fs{grid-template-columns:1fr}.doc>section,.doc>.cover{padding:28px 20px}.kpis,.nums,.facts4,.meta{grid-template-columns:1fr 1fr}.grid2,.ab,.swot{grid-template-columns:1fr}.swot>div{border-right:0!important;border-bottom:1px solid var(--line)}.gantt{min-width:620px}.bar .legend{flex-direction:column}.ab .arrow{display:none}h1{font-size:28px}.webnav .links{display:none}}
+}
 .wm{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:9}
 .wm span{transform:rotate(-35deg);font-size:46pt;color:rgba(20,20,20,.05);white-space:nowrap;letter-spacing:.1em}
 </style></head><body>
 ${m.paid ? "" : `<div class="wm"><span>ASDIC™ · FREE</span></div>`}
-${body}
+<nav class="webnav"><span class="brand">${logo ? `<img src="${logo}" alt="">` : ""}<span>${e(m.brand?.companyName || m.planTitle)}</span>${chrome.confidential ? `<b>Конфиденциально</b>` : ""}</span><span class="links">${toc.map((t) => `<a href="#${t.id}">${e(t.title.replace(/^\d+\.\s*/, ""))}</a>`).join("")}</span></nav>
+<main class="doc">${body}</main>
 </body></html>`;
 }
 
@@ -308,10 +327,10 @@ function gantt(d: Dashboard) {
     .join("");
   return `<div style="break-inside:avoid"><h2 style="margin-top:4mm">Дорожная карта</h2>
 <div class="keys"><span><i style="background:var(--a)"></i>Действие</span><span><i style="background:var(--red)"></i>Запуск (решение человека)</span><span><i style="border:.4mm solid #141414"></i>Контрольная точка</span><span><i style="background:#141414"></i>Срок цели</span></div>
-<table class="gantt"><colgroup><col style="width:38%"><col style="width:14%"><col></colgroup>
+<div class="gwrap"><table class="gantt"><colgroup><col style="width:38%"><col style="width:14%"><col></colgroup>
 <tr><th>Что</th><th>Кто</th><th><div class="lane" style="height:3mm">${head}</div></th></tr>
-${rows.map((r) => `<tr><td>${e(clip(r.label, 70))}</td><td class="cap">${e(r.owner ?? "")}</td><td><div class="lane">${grid}<i class="m ${r.kind}" style="left:${pos(r.date).toFixed(2)}%"></i></div></td></tr>`).join("")}
-</table>${d.timeline.length > rows.length ? `<p class="cap">Показаны первые ${rows.length} из ${d.timeline.length}. Полный список в главах ниже.</p>` : ""}</div>`;
+${rows.map((r) => `<tr><td>${e(clip(r.label, 70))}</td><td class="cap">${e(r.owner ?? "")}</td><td><div class="lane">${grid}<i class="m ${r.kind}" title="${e(r.label)} · ${e(ruDay(r.date))}" style="left:${pos(r.date).toFixed(2)}%"></i></div></td></tr>`).join("")}
+</table></div>${d.timeline.length > rows.length ? `<p class="cap">Показаны первые ${rows.length} из ${d.timeline.length}. Полный список в главах ниже.</p>` : ""}</div>`;
 }
 
 function part(num: string, titleRu: string, title: string, question: string, sections: DocSection[], i: number, full: boolean, g?: { actionTitle: string; takeaway: string; numbers: { value: string; label: string }[] }) {

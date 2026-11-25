@@ -24,7 +24,7 @@ import {
 
 type Plan = typeof schema.plans.$inferSelect;
 export type Scope = "plan" | "stage" | "none";
-export type OpKind = "draft_sources" | "draft_web" | "options" | "improve_sources" | "improve_web" | "critique";
+export type OpKind = "draft_sources" | "draft_web" | "options" | "improve_sources" | "improve_web" | "critique" | "consistency";
 
 export interface Evidence {
   field?: string;
@@ -418,4 +418,117 @@ export async function summarizeSource(title: string, text: string): Promise<stri
     schema: { type: "object", properties: { summary: { type: "string" } }, required: ["summary"], additionalProperties: false },
   });
   return data.summary;
+}
+
+// ---------- противоречия ----------
+
+export interface Conflict {
+  id: string;
+  title: string;
+  why: string;
+  severity: "high" | "medium" | "low";
+  a: { itemId: string; field: string; value: string };
+  b: { itemId: string; field: string; value: string };
+  fix?: { itemId: string; field: string; proposed: string; rationale: string };
+  status: "open" | "fixed" | "kept";
+  note?: string;
+}
+export interface ConsistencyResult {
+  summary: string;
+  conflicts: Conflict[];
+}
+
+const consistencySchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["summary", "conflicts"],
+  properties: {
+    summary: { type: "string" },
+    conflicts: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["title", "why", "severity", "a_item", "a_field", "b_item", "b_field", "fix_item", "fix_field", "fix_value", "fix_why"],
+        properties: {
+          title: { type: "string" },
+          why: { type: "string" },
+          severity: { type: "string", enum: ["high", "medium", "low"] },
+          a_item: { type: "string" },
+          a_field: { type: "string" },
+          b_item: { type: "string" },
+          b_field: { type: "string" },
+          fix_item: { type: "string" },
+          fix_field: { type: "string" },
+          fix_value: { type: "string" },
+          fix_why: { type: "string" },
+        },
+      },
+    },
+  },
+};
+
+/** Записи плана с id и ключами полей, чтобы ИИ мог точно указать, что с чем спорит */
+function idItemsBlock(method: Method, items: (typeof schema.items.$inferSelect)[]) {
+  return `<plan_items>\n${items
+    .map((it) => {
+      const { section } = findSection(method, it.sectionKey);
+      const vals = section.fields
+        .map((f) => {
+          const v = String(it.values[f.key] ?? "").trim();
+          return v ? `  ${f.key} («${f.label}»): ${v.replace(/</g, "‹").slice(0, 600)}` : null;
+        })
+        .filter(Boolean)
+        .join("\n");
+      return `<item id="${it.id}" level="${section.title}" status="${it.reviewStatus}">\n${vals}\n</item>`;
+    })
+    .join("\n")}\n</plan_items>`;
+}
+
+/** Проверка согласованности плана: цифры и решения, которые спорят друг с другом */
+export async function runConsistency(a: { plan: Plan; method: Method; userId: string }) {
+  return recordOp({
+    plan: a.plan,
+    kind: "consistency",
+    sectionKey: "consistency",
+    guidance: "",
+    scope: "plan",
+    userId: a.userId,
+    price: "critique",
+    run: async () => {
+      const items = await db.select().from(schema.items).where(eq(schema.items.planId, a.plan.id));
+      const byId = new Map(items.map((i) => [i.id, i]));
+      const parts: Part[] = [
+        {
+          text: [
+            planBlock(a.plan),
+            idItemsBlock(a.method, items),
+            `<task>Найди противоречия между записями плана и точками A и B: цифры, которые не сходятся (доход в расчёте цели и в целях, бюджет и сумма действий, сроки целей вне горизонта, контрольные точки после срока цели, сегмент продукта не совпадает с выбранным сегментом, текущее значение цели не совпадает с точкой A и т. п.). Только настоящие противоречия, не стилистику. Для каждого: короткий заголовок, почему это противоречие и чем грозит, серьёзность, две записи и поля, которые спорят (a_item, a_field, b_item, b_field: id и ключ поля ровно как в plan_items; если спор с точкой A или B, укажи в b_item "plan", в b_field "pointA" или "pointB"). Предложи исправление одного поля одной записи (fix_item, fix_field, fix_value — новое значение целиком в формате поля, fix_why — почему так). Если надёжного исправления нет, оставь fix_item пустым. Если противоречий нет, верни пустой список и так и скажи в summary.</task>`,
+          ].join("\n\n"),
+        },
+      ];
+      const { data, usage } = await structured<{ summary: string; conflicts: { title: string; why: string; severity: Conflict["severity"]; a_item: string; a_field: string; b_item: string; b_field: string; fix_item: string; fix_field: string; fix_value: string; fix_why: string }[] }>({
+        system: systemPrompt(a.method),
+        parts,
+        schema: consistencySchema,
+        effort: "high",
+        maxTokens: 12000,
+      });
+      const val = (itemId: string, field: string) => (itemId === "plan" ? String((a.plan as Record<string, unknown>)[field] ?? "") : String(byId.get(itemId)?.values[field] ?? ""));
+      const okRef = (itemId: string, field: string) => (itemId === "plan" ? field === "pointA" || field === "pointB" : !!byId.get(itemId) && findSection(a.method, byId.get(itemId)!.sectionKey).section.fields.some((f) => f.key === field));
+      const conflicts: Conflict[] = data.conflicts
+        .filter((c) => okRef(c.a_item, c.a_field) && okRef(c.b_item, c.b_field))
+        .map((c) => ({
+          id: newId(),
+          title: c.title,
+          why: c.why,
+          severity: c.severity,
+          a: { itemId: c.a_item, field: c.a_field, value: val(c.a_item, c.a_field) },
+          b: { itemId: c.b_item, field: c.b_field, value: val(c.b_item, c.b_field) },
+          fix: c.fix_item && c.fix_item !== "plan" && okRef(c.fix_item, c.fix_field) && c.fix_value.trim() ? { itemId: c.fix_item, field: c.fix_field, proposed: c.fix_value.trim(), rationale: c.fix_why } : undefined,
+          status: "open",
+        }));
+      return { result: { summary: data.summary, conflicts } satisfies ConsistencyResult, usage: [usage] };
+    },
+  });
 }

@@ -32,10 +32,10 @@ export function ModeChip({ mode }: { mode: DecisionMode }) {
 export function FieldInput({ f, value, name }: { f: FieldDef; value?: unknown; name?: string }) {
   const n = name ?? `f_${f.key}`;
   const v = value == null ? "" : String(value);
-  if (f.type === "longtext") return <textarea name={n} defaultValue={v} placeholder={f.placeholder} className="field" required={f.required} rows={4} />;
+  if (f.type === "longtext") return <textarea id={n} name={n} defaultValue={v} placeholder={f.placeholder} className="field" required={f.required} rows={4} />;
   if (f.type === "enum")
     return (
-      <select name={n} defaultValue={v} className="field" required={f.required}>
+      <select id={n} name={n} defaultValue={v} className="field" required={f.required}>
         <option value="">Не выбрано</option>
         {f.options?.map((o) => (
           <option key={o.value} value={o.value}>
@@ -50,7 +50,7 @@ export function FieldInput({ f, value, name }: { f: FieldDef; value?: unknown; n
         <input type="checkbox" name={n} defaultChecked={value === true || value === "true"} className="size-4 accent-white" /> Да
       </label>
     );
-  return <input name={n} defaultValue={v} placeholder={f.placeholder} className="field" type={f.type === "date" ? "date" : f.type === "number" ? "number" : "text"} required={f.required} />;
+  return <input id={n} name={n} defaultValue={v} placeholder={f.placeholder} className="field" type={f.type === "date" ? "date" : f.type === "number" ? "number" : "text"} required={f.required} />;
 }
 
 export function FormFields({ section, values }: { section: Section; values?: Record<string, unknown> }) {

@@ -27,6 +27,7 @@ export async function GET(_: Request, ctx: RouteContext<"/api/plans/[planId]/doc
     const buf = await htmlToPdf(await renderHtml(model), pageChrome(model));
     return new Response(new Uint8Array(buf), { headers: { "content-type": "application/pdf", "content-disposition": name("pdf") } });
   }
+  if (format === "web") return new Response(await renderHtml(model), { headers: { "content-type": "text/html; charset=utf-8", "content-disposition": name("html") } });
   if (format === "html") return new Response(await renderHtml(model), { headers: { "content-type": "text/html; charset=utf-8" } });
   return new Response("Unknown format", { status: 400 });
 }
