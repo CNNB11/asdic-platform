@@ -3,6 +3,9 @@ import { requirePlan } from "@/lib/access";
 import { planClosures, planItems } from "@/lib/data";
 import { planProgress } from "@/lib/progress";
 import { TopBar } from "@/components/TopBar";
+import { db, schema } from "@/db";
+import { eq } from "drizzle-orm";
+import { overdue } from "@/lib/control";
 
 export default async function PlanLayout({ children, params }: LayoutProps<"/plans/[planId]">) {
   const { planId } = await params;
@@ -10,6 +13,8 @@ export default async function PlanLayout({ children, params }: LayoutProps<"/pla
   const items = await planItems(planId);
   const prog = planProgress(method, items, await planClosures(planId));
   const toReview = items.filter((i) => i.reviewStatus === "unreviewed").length;
+  const goals = items.filter((i) => i.sectionKey === "goals" && i.reviewStatus === "signed").map((i) => i.id);
+  const late = plan.control ? overdue(plan.control, goals, await db.select({ itemId: schema.goalCheckins.itemId, periodDate: schema.goalCheckins.periodDate }).from(schema.goalCheckins).where(eq(schema.goalCheckins.planId, planId))) : null;
   const base = `/plans/${planId}`;
   return (
     <>
@@ -37,11 +42,25 @@ export default async function PlanLayout({ children, params }: LayoutProps<"/pla
               Требует проверки {toReview > 0 && <span className="rounded bg-amber px-1.5 text-[12px] text-black">{toReview}</span>}
             </span>
           </NavLink>
+          <NavLink href={`${base}/control`}>
+            <span className="flex items-center justify-between gap-2">
+              Контроль {late ? <span className="rounded bg-amber px-1.5 text-[12px] text-black">факт</span> : plan.control ? <span className="cap">вкл</span> : null}
+            </span>
+          </NavLink>
+          <NavLink href={`${base}/team`}>Команда</NavLink>
+          <NavLink href={`${base}/check`}>Противоречия</NavLink>
           <NavLink href={`${base}/items`}>Все записи</NavLink>
           <NavLink href={`${base}/sources`}>Источники</NavLink>
           <NavLink href={`${base}/documents`}>Документы</NavLink>
         </nav>
-        <main className="min-w-0 flex-1 px-4 py-8 md:px-10">{children}</main>
+        <main className="min-w-0 flex-1 px-4 py-8 md:px-10">
+          {late && (
+            <Link href={`${base}/control`} className="mb-6 block max-w-5xl rounded-lg border border-amber/60 bg-amber/10 px-4 py-2.5 text-head hover:bg-amber/20">
+              Контроль: пора внести факт по целям за {new Date(late.date).toLocaleDateString("ru-RU", { day: "numeric", month: "long", timeZone: "UTC" })} →
+            </Link>
+          )}
+          {children}
+        </main>
       </div>
     </>
   );

@@ -10,14 +10,16 @@ import { requirePlan } from "@/lib/access";
 import { newId } from "@/lib/ids";
 import { extractText, storeFile, validateFile } from "@/lib/sources";
 import { runCritique, runDraft, runImprove, summarizeSource, type DraftResult, type ImproveResult, type OptionsResult, type Scope } from "@/lib/ai/ops";
-import { buildStageMarkdown } from "@/lib/export/markdown";
+import { buildFullMarkdown, buildStageMarkdown } from "@/lib/export/markdown";
 import { metered } from "@/lib/ai/telemetry";
 import { displayValue, findSection, type Section } from "@/method";
 import { ASDIC } from "@/method/asdic";
-import { CreditsError, canCreatePlan, ensureFor } from "@/lib/billing/credits";
+import { CreditsError, canCreatePlan, ensureFor, isPaidUser } from "@/lib/billing/credits";
 import { SIGNUP_CREDITS, draftKind } from "@/lib/billing/tiers";
+import { normalizeNumInput } from "@/lib/num";
+import { deriveValues } from "@/lib/goalMath";
 
-export type FormState = { error?: string } | undefined;
+export type FormState = { error?: string; ok?: boolean } | undefined;
 
 // ---------- вход ----------
 
@@ -94,9 +96,15 @@ function readValues(section: Section, fd: FormData, prefix = "f_") {
   for (const f of section.fields) {
     const raw = fd.get(`${prefix}${f.key}`);
     if (f.type === "bool") values[f.key] = raw === "on" || raw === "true";
+    else if (f.type === "number") values[f.key] = normalizeNumInput(String(raw ?? "")) ?? String(raw ?? "").trim();
     else values[f.key] = String(raw ?? "").trim();
   }
   return values;
+}
+
+/** Числовые поля, в которых не число: «48 млн» вместо 48 */
+function badNumbers(section: Section, values: Record<string, unknown>) {
+  return section.fields.filter((f) => f.type === "number" && String(values[f.key] ?? "") !== "" && normalizeNumInput(String(values[f.key])) === null).map((f) => f.label);
 }
 
 function missingRequired(section: Section, values: Record<string, unknown>) {
@@ -123,9 +131,11 @@ async function enforceUnique(planId: string, section: Section, keepId: string, v
 export async function saveItem(planId: string, sectionKey: string, itemId: string | null, _: FormState, fd: FormData): Promise<FormState> {
   const { user, plan, method } = await requirePlan(planId);
   const { section } = findSection(method, sectionKey);
-  const values = readValues(section, fd);
+  const values = deriveValues(sectionKey, readValues(section, fd));
   const missing = missingRequired(section, values);
   if (missing.length) return { error: `Заполните: ${missing.join(", ")}` };
+  const bad = badNumbers(section, values);
+  if (bad.length) return { error: `Нужно число (без слов, единицу пишите отдельно): ${bad.join(", ")}` };
   const now = new Date();
   const red = section.mode === "red";
   let decision = null as typeof schema.items.$inferSelect.decision;
@@ -401,7 +411,18 @@ export async function ackCritique(planId: string, opId: string) {
 
 export async function generateDocument(planId: string, stageKey: string) {
   const { user, plan, method } = await requirePlan(planId);
-  const { model, markdown } = await buildStageMarkdown(plan, method, stageKey, user.name);
+  const paid = isPaidUser(user);
+  const { model, markdown } = stageKey === "full" ? await buildFullMarkdown(plan, method, user.name, paid) : await buildStageMarkdown(plan, method, stageKey, user.name, paid);
+  if (stageKey === "full") {
+    // Слой «для тех, кто сканирует»: пишет ИИ. Нет кредитов или ИИ недоступен — документ собирается без него.
+    try {
+      await ensureFor(user, "doc_digest");
+      const { buildDigest } = await import("@/lib/export/digest");
+      model.digest = (await buildDigest(plan, method, user.id)) ?? undefined;
+    } catch (e) {
+      console.error("digest", e instanceof Error ? e.message : e);
+    }
+  }
   const [{ v }] = await db
     .select({ v: max(schema.documents.version) })
     .from(schema.documents)
@@ -416,6 +437,53 @@ export async function deleteDocuments(planId: string, ids: string[]) {
   await requirePlan(planId);
   if (ids.length) await db.delete(schema.documents).where(and(eq(schema.documents.planId, planId), inArray(schema.documents.id, ids)));
   revalidatePath(`/plans/${planId}/documents`);
+}
+
+const LOGO_TYPES: Record<string, { ext: string; check: (b: Buffer) => boolean }> = {
+  "image/png": { ext: ".png", check: (b) => b.subarray(1, 4).toString("latin1") === "PNG" },
+  "image/jpeg": { ext: ".jpg", check: (b) => b[0] === 0xff && b[1] === 0xd8 },
+  "image/svg+xml": { ext: ".svg", check: (b) => /<svg[\s>]/i.test(b.subarray(0, 4096).toString("utf8")) },
+};
+
+/** Оформление выгрузки: логотип, данные обложки, цвет. Гриф NDA только на платном тарифе. */
+export async function saveBrand(planId: string, _: FormState, fd: FormData): Promise<FormState> {
+  const { user, plan } = await requirePlan(planId);
+  const paid = isPaidUser(user);
+  const brand = { ...(plan.brand ?? {}) };
+  const str = (k: string, n: number) => String(fd.get(k) ?? "").trim().slice(0, n);
+  brand.companyName = str("companyName", 120);
+  brand.preparedFor = str("preparedFor", 160);
+  brand.contact = str("contact", 500);
+  const accent = str("accent", 7);
+  brand.accent = /^#[0-9a-f]{6}$/i.test(accent) ? accent : undefined;
+  brand.confidential = paid && fd.get("confidential") === "on";
+  brand.ndaText = paid ? str("ndaText", 1200) : brand.ndaText;
+  if (fd.get("removeLogo") === "on") {
+    brand.logoKey = undefined;
+    brand.logoMime = undefined;
+  }
+  const file = fd.get("logo");
+  if (file instanceof File && file.size > 0) {
+    if (file.size > 2 * 1024 * 1024) return { error: "Логотип больше 2 МБ" };
+    const type = LOGO_TYPES[file.type];
+    const bytes = Buffer.from(await file.arrayBuffer());
+    if (!type || !type.check(bytes)) return { error: "Логотип: подойдёт PNG, JPG или SVG" };
+    let data = bytes;
+    if (file.type === "image/svg+xml") {
+      // SVG показывается как картинка, но скрипты и ссылки всё равно вырезаем
+      const { sanitizeSvg } = await import("@/lib/images/sanitize");
+      try {
+        data = Buffer.from(sanitizeSvg(bytes.toString("utf8"), ""), "utf8");
+      } catch {
+        return { error: "Логотип: SVG не читается" };
+      }
+    }
+    brand.logoKey = await storeFile(data, type.ext);
+    brand.logoMime = file.type;
+  }
+  await db.update(schema.plans).set({ brand, updatedAt: new Date() }).where(eq(schema.plans.id, planId));
+  revalidatePath(`/plans/${planId}/documents`);
+  return { ok: true };
 }
 
 // ---------- этапы ----------
@@ -555,4 +623,132 @@ export async function editVisual(planId: string, visualId: string, fd: FormData)
   }
   revalidatePath(`/plans/${planId}/items/${v.itemId}`);
   redirect(`/plans/${planId}/items/${v.itemId}?${q}#visuals`);
+}
+
+// ---------- контроль ----------
+
+/** Включает Контроль: окно сверок. Доступно после закрытия этапа Strategy. */
+export async function enableControl(planId: string, fd: FormData) {
+  const { user } = await requirePlan(planId);
+  const w = String(fd.get("window") ?? "month");
+  const window = w === "week" || w === "quarter" ? w : "month";
+  const start = /^\d{4}-\d{2}-\d{2}$/.test(String(fd.get("startAt") ?? "")) ? String(fd.get("startAt")) : new Date().toISOString().slice(0, 10);
+  await db.update(schema.plans).set({ control: { window, startAt: start, enabledBy: user.name }, updatedAt: new Date() }).where(eq(schema.plans.id, planId));
+  revalidatePath(`/plans/${planId}`, "layout");
+}
+
+export async function disableControl(planId: string) {
+  await requirePlan(planId);
+  await db.update(schema.plans).set({ control: null, updatedAt: new Date() }).where(eq(schema.plans.id, planId));
+  revalidatePath(`/plans/${planId}`, "layout");
+}
+
+/** Факт по целям на дату сверки. Пустое поле пропускаем, повторный ввод на ту же дату заменяет факт. */
+export async function saveCheckins(planId: string, _: FormState, fd: FormData): Promise<FormState> {
+  const { user } = await requirePlan(planId);
+  const date = String(fd.get("periodDate") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) return { error: "Укажите дату сверки" };
+  const goals = await db.select().from(schema.items).where(and(eq(schema.items.planId, planId), eq(schema.items.sectionKey, "goals")));
+  let saved = 0;
+  for (const g of goals) {
+    const raw = String(fd.get(`v_${g.id}`) ?? "");
+    if (!raw.trim()) continue;
+    const value = normalizeNumInput(raw);
+    if (value === null || value === "") return { error: `Факт по цели «${String(g.values.goal ?? "")}»: нужно число` };
+    const note = String(fd.get(`n_${g.id}`) ?? "").trim().slice(0, 1000);
+    await db
+      .insert(schema.goalCheckins)
+      .values({ id: newId(), planId, itemId: g.id, periodDate: date, value, note, createdBy: user.name })
+      .onConflictDoUpdate({ target: [schema.goalCheckins.itemId, schema.goalCheckins.periodDate], set: { value, note, createdBy: user.name, createdAt: new Date() } });
+    saved++;
+  }
+  if (!saved) return { error: "Впишите факт хотя бы по одной цели" };
+  revalidatePath(`/plans/${planId}`, "layout");
+  return { ok: true };
+}
+
+export async function deleteCheckin(planId: string, id: string) {
+  await requirePlan(planId);
+  await db.delete(schema.goalCheckins).where(and(eq(schema.goalCheckins.planId, planId), eq(schema.goalCheckins.id, id)));
+  revalidatePath(`/plans/${planId}`, "layout");
+}
+
+// ---------- команда ----------
+
+/** Роли команды: есть, частично, нет; как закрыть недостающую. Видит ИИ при плане действий. */
+export async function saveTeam(planId: string, fd: FormData) {
+  await requirePlan(planId);
+  const { ROLES } = await import("@/method/asdic");
+  const custom = String(fd.get("custom") ?? "")
+    .split("\n")
+    .map((x) => x.trim())
+    .filter(Boolean)
+    .slice(0, 20);
+  const keys = [...ROLES.map((r) => ({ key: r.value, label: r.label })), ...custom.map((label, i) => ({ key: `custom_${i}`, label }))];
+  const team = keys
+    .map(({ key, label }) => {
+      const st = String(fd.get(`s_${key}`) ?? "");
+      if (st !== "have" && st !== "partial" && st !== "missing") return null;
+      return { key, label, status: st as "have" | "partial" | "missing", name: String(fd.get(`n_${key}`) ?? "").trim().slice(0, 120) || undefined, cover: String(fd.get(`c_${key}`) ?? "") || undefined };
+    })
+    .filter((x): x is NonNullable<typeof x> => !!x);
+  await db.update(schema.plans).set({ team, updatedAt: new Date() }).where(eq(schema.plans.id, planId));
+  revalidatePath(`/plans/${planId}`, "layout");
+}
+
+// ---------- противоречия ----------
+
+export async function startConsistency(planId: string) {
+  const { user, plan, method } = await requirePlan(planId);
+  await gate(user, "critique");
+  const { runConsistency } = await import("@/lib/ai/ops");
+  const opId = await runConsistency({ plan, method, userId: user.id });
+  redirect(`/plans/${planId}/check?op=${opId}`);
+}
+
+async function updateConflict(planId: string, opId: string, conflictId: string, patch: Partial<import("@/lib/ai/ops").Conflict>) {
+  const [op] = await db.select().from(schema.aiOps).where(and(eq(schema.aiOps.id, opId), eq(schema.aiOps.planId, planId), eq(schema.aiOps.kind, "consistency")));
+  if (!op) return null;
+  const r = op.result as import("@/lib/ai/ops").ConsistencyResult;
+  const c = r.conflicts.find((x) => x.id === conflictId);
+  if (!c) return null;
+  Object.assign(c, patch);
+  await db.update(schema.aiOps).set({ result: r, updatedAt: new Date() }).where(eq(schema.aiOps.id, op.id));
+  return c;
+}
+
+/** Исправить автоматически: человек подтвердил предложенное значение. Зависимые цифры (расчёт цели) пересчитываются. */
+export async function fixConflict(planId: string, opId: string, conflictId: string, fd: FormData) {
+  const { user, method } = await requirePlan(planId);
+  const [op] = await db.select().from(schema.aiOps).where(and(eq(schema.aiOps.id, opId), eq(schema.aiOps.planId, planId)));
+  const c = (op?.result as import("@/lib/ai/ops").ConsistencyResult | undefined)?.conflicts.find((x) => x.id === conflictId);
+  if (!c?.fix) return;
+  const [it] = await db.select().from(schema.items).where(and(eq(schema.items.id, c.fix.itemId), eq(schema.items.planId, planId)));
+  if (!it) return;
+  const proposed = String(fd.get("value") ?? c.fix.proposed).trim() || c.fix.proposed;
+  const { section } = findSection(method, it.sectionKey);
+  const values = deriveValues(it.sectionKey, { ...it.values, [c.fix.field]: section.fields.find((f) => f.key === c.fix!.field)?.type === "number" ? (normalizeNumInput(proposed) ?? proposed) : proposed });
+  const now = new Date();
+  await db
+    .update(schema.items)
+    .set({ values, updatedBy: user.id, updatedAt: now, reviewedBy: user.name, reviewedAt: now, reviewStatus: section.mode === "red" ? "signed" : "approved" })
+    .where(eq(schema.items.id, it.id));
+  await db.insert(schema.itemRevisions).values({ id: newId(), itemId: it.id, values, actor: user.id, savedBy: user.name, note: `Исправлено противоречие: ${c.title}` });
+  await updateConflict(planId, opId, conflictId, { status: "fixed", note: `Исправлено: ${section.fields.find((f) => f.key === c.fix!.field)?.label} = ${proposed}` });
+  revalidatePath(`/plans/${planId}`, "layout");
+  redirect(`/plans/${planId}/check?op=${opId}`);
+}
+
+/** Оставить как есть: человек записывает причину */
+export async function keepConflict(planId: string, opId: string, conflictId: string, fd: FormData) {
+  const { user } = await requirePlan(planId);
+  const reason = String(fd.get("reason") ?? "").trim().slice(0, 500);
+  await updateConflict(planId, opId, conflictId, { status: "kept", note: `${user.name}: ${reason || "оставлено без пояснения"}` });
+  revalidatePath(`/plans/${planId}/check`);
+}
+
+export async function markConflictFixed(planId: string, opId: string, conflictId: string) {
+  const { user } = await requirePlan(planId);
+  await updateConflict(planId, opId, conflictId, { status: "fixed", note: `Исправлено вручную, ${user.name}` });
+  revalidatePath(`/plans/${planId}/check`);
 }

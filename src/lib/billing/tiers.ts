@@ -95,6 +95,7 @@ const PRICES: Record<string, number> = {
   image_trends: 17,
   image_edit: 6,
   source_summary: 1,
+  doc_digest: 2,
 };
 /** Ключ цены для черновика уровня */
 export const draftKind = (red: boolean, web: boolean) => (red ? (web ? "options_web" : "options") : web ? "draft_web" : "draft_sources");

@@ -108,7 +108,7 @@ export default async function OpPage({ params }: PageProps<"/plans/[planId]/ops/
         <p className="prose-w">
           Это решение красного уровня. ИИ не выбирает за вас: сравните варианты, начиная со слабых мест. Выбранный вариант откроется в форме, где его можно переписать и подписать. Подписывает {user.name}.
         </p>
-        {r.notes && <p className="card px-4 py-3">{r.notes}</p>}
+        {r.notes && <Notes text={r.notes} planId={planId} />}
         {meta}
         <div className="grid gap-4 lg:grid-cols-3">
           {r.options.map((o, i) => (
@@ -152,7 +152,7 @@ export default async function OpPage({ params }: PageProps<"/plans/[planId]/ops/
     return (
       <div className="grid max-w-4xl gap-6">
         {header}
-        {r.notes && <p className="card px-4 py-3">{r.notes}</p>}
+        {r.notes && <Notes text={r.notes} planId={planId} />}
         {meta}
         {r.items.length === 0 ? (
           <div className="card p-5">
@@ -299,6 +299,21 @@ function Block({ label, text }: { label: string; text: string }) {
     <div>
       <div className="cap">{label}</div>
       <p className="mt-1 whitespace-pre-wrap">{text}</p>
+    </div>
+  );
+}
+
+/** Заметки ИИ. Если в них есть противоречие, даём перейти к проверке плана, где его можно исправить */
+function Notes({ text, planId }: { text: string; planId: string }) {
+  const conflict = /противореч|не сход|расход|не совпада|несоответств/i.test(text);
+  return (
+    <div className={`card px-4 py-3 ${conflict ? "border-amber/60" : ""}`}>
+      <p>{text}</p>
+      {conflict && (
+        <Link href={`/plans/${planId}/check`} className="link mt-2 inline-block text-head">
+          Похоже на противоречие в цифрах. Открыть и исправить →
+        </Link>
+      )}
     </div>
   );
 }

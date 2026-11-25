@@ -7,6 +7,7 @@ export interface PlanCtx {
   company: string;
   pointA: string;
   pointB: string;
+  team?: { key: string; label: string; status: string; name?: string; cover?: string }[] | null;
 }
 
 export interface SourceCtx {
@@ -61,7 +62,7 @@ export function sectionBlock(stage: Stage, section: Section) {
   const fields = section.fields
     .map((f) => {
       const opts = f.options ? ` Варианты: ${f.options.map((o) => `${o.value} (${o.label})`).join(", ")}.` : "";
-      const help = f.help ? ` ${f.help}` : "";
+      const help = (f.help ? ` ${f.help}` : "") + (f.type === "number" ? " Только число цифрами, без единиц и пробелов." : "");
       return `- ${f.key}: «${f.label}» (${f.type}${f.required ? ", обязательное" : ""}).${help}${opts}`;
     })
     .join("\n");
@@ -85,8 +86,14 @@ export function planBlock(plan: PlanCtx) {
 Название плана: ${esc(plan.title)}
 Компания: ${esc(plan.company || "не указано")}
 Точка A (где бизнес сейчас): ${esc(plan.pointA || "не указано")}
-Точка B (куда хочет прийти): ${esc(plan.pointB || "не указано")}
+Точка B (куда хочет прийти): ${esc(plan.pointB || "не указано")}${teamLine(plan)}
 </plan>`;
+}
+
+function teamLine(plan: PlanCtx) {
+  if (!plan.team?.length) return "";
+  const by = (st: string) => plan.team!.filter((r) => r.status === st).map((r) => `${r.key} (${esc(r.label)}${r.name ? ", " + esc(r.name) : ""})`).join("; ") || "нет";
+  return `\nКоманда. Роли есть: ${by("have")}. Частично (совмещают): ${by("partial")}. Ролей нет: ${by("missing")}. Назначай действия на роли из команды; если нужна роль, которой нет, так и скажи и предложи, как её закрыть (найм, фриланс, подрядчик).`;
 }
 
 export function itemsBlock(method: Method, items: ItemCtx[]) {

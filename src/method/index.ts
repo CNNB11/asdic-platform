@@ -39,6 +39,11 @@ export function displayValue(section: Section, key: string, v: unknown): string 
   if (v === undefined || v === null || v === "") return "";
   if (f?.type === "bool") return v === true || v === "true" ? "Да" : "Нет";
   if (f?.type === "enum") return f.options?.find((o) => o.value === v)?.label ?? String(v);
+  if (f?.type === "number" && /^-?\d+(\.\d+)?$/.test(String(v))) return Number(v).toLocaleString("ru-RU", { maximumFractionDigits: 2 });
+  if (f?.type === "date") {
+    const m = String(v).match(/^(\d{4})-(\d{2})-(\d{2})$/);
+    if (m) return `${m[3]}.${m[2]}.${m[1]}`;
+  }
   return String(v);
 }
 
