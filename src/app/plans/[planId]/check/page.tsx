@@ -6,7 +6,7 @@ import { fixConflict, keepConflict, markConflictFixed, startConsistency } from "
 import type { Conflict, ConsistencyResult } from "@/lib/ai/ops";
 import { Submit, PendingNote } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
-import { findSection, itemTitle, type Method } from "@/method";
+import { findSection, hasSection, itemTitle, type Method } from "@/method";
 import { estimate, fmtCredits } from "@/lib/billing/tiers";
 
 const SEV = { high: "Серьёзно", medium: "Заметно", low: "Мелочь" };
@@ -159,7 +159,7 @@ function Side({ x }: { x: ReturnType<typeof describe> }) {
 function describe(method: Method, plan: { id: string; pointA: string; pointB: string }, items: (typeof schema.items.$inferSelect)[], x: { itemId: string; field: string; value: string }) {
   if (x.itemId === "plan") return { where: x.field === "pointA" ? "Точка A" : "Точка B", label: "описание плана", value: x.field === "pointA" ? plan.pointA : plan.pointB, href: `/plans/${plan.id}`, editHref: `/plans/${plan.id}`, red: false };
   const it = items.find((i) => i.id === x.itemId);
-  if (!it) return { where: "Запись удалена", label: x.field, value: x.value, href: undefined, editHref: undefined, red: false };
+  if (!it || !hasSection(method, it.sectionKey)) return { where: it ? "Запись глубокой стратегии" : "Запись удалена", label: x.field, value: x.value, href: undefined, editHref: undefined, red: false };
   const { section } = findSection(method, it.sectionKey);
   const f = section.fields.find((ff) => ff.key === x.field);
   return {

@@ -4,7 +4,7 @@ import { and, asc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
 import { locateQuote } from "@/lib/sources";
-import { findSection, itemTitle, type Method, type Section } from "@/method";
+import { findSection, hasSection, itemTitle, type Method, type Section } from "@/method";
 import { AIError, structured, webResearch, type Part, type Usage } from "./provider";
 import { metered } from "./telemetry";
 import { draftKind } from "@/lib/billing/tiers";
@@ -257,6 +257,7 @@ export async function runDraft(a: {
             sectionBlock(stage, section),
             itemsBlock(a.method, ctx.items),
             researchNotes ? `<web_research_notes>${researchNotes}</web_research_notes>` : "",
+            section.key === "monthly_review" ? await controlFacts(a.plan) : "",
             guidanceBlock(a.guidance),
             task,
           ]
@@ -496,7 +497,7 @@ export async function runConsistency(a: { plan: Plan; method: Method; userId: st
     userId: a.userId,
     price: "critique",
     run: async () => {
-      const items = await db.select().from(schema.items).where(eq(schema.items.planId, a.plan.id));
+      const items = (await db.select().from(schema.items).where(eq(schema.items.planId, a.plan.id))).filter((i) => hasSection(a.method, i.sectionKey));
       const byId = new Map(items.map((i) => [i.id, i]));
       const parts: Part[] = [
         {
@@ -531,4 +532,23 @@ export async function runConsistency(a: { plan: Plan; method: Method; userId: st
       return { result: { summary: data.summary, conflicts } satisfies ConsistencyResult, usage: [usage] };
     },
   });
+}
+
+/** Факт по целям из Контроля для разбора месяца: план по прямой и отклонение на каждую дату */
+async function controlFacts(plan: Plan) {
+  const { goalStatus } = await import("@/lib/control");
+  const goals = await db.select().from(schema.items).where(and(eq(schema.items.planId, plan.id), eq(schema.items.sectionKey, "goals")));
+  const facts = await db.select().from(schema.goalCheckins).where(eq(schema.goalCheckins.planId, plan.id)).orderBy(asc(schema.goalCheckins.periodDate));
+  if (!facts.length) return "<control_facts>Факта по целям ещё нет: Контроль не заполнен. Скажи об этом и разбери только то, что видно по ответу рынка.</control_facts>";
+  const start = plan.control?.startAt ?? "";
+  const lines = goals.map((g) => {
+    const mine = facts.filter((f) => f.itemId === g.id);
+    const rows = mine.map((f) => {
+      const st = goalStatus(g.values, start || g.createdAt.toISOString().slice(0, 10), { date: f.periodDate, value: Number(f.value) });
+      const exp = "expected" in st && st.expected != null ? `, по плану ${Math.round(st.expected * 100) / 100}` : "";
+      return `  ${f.periodDate}: факт ${f.value}${exp}${f.note ? ` (${f.note.replace(/</g, "‹")})` : ""}`;
+    });
+    return `Цель «${String(g.values.goal ?? "")}»: сейчас ${String(g.values.current ?? "")} → цель ${String(g.values.target ?? "")} ${String(g.values.unit ?? "")} к ${String(g.values.deadline ?? "")}\n${rows.join("\n") || "  факта нет"}`;
+  });
+  return `<control_facts>\n${lines.join("\n\n")}\n</control_facts>`;
 }

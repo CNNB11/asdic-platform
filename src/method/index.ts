@@ -9,6 +9,19 @@ export function getMethod(key: string): Method {
   return m;
 }
 
+export type Depth = "standard" | "deep";
+
+/** Метод для глубины плана: в стандартной стратегии уровней «deep» нет. Записи в них сохраняются и вернутся при переключении. */
+export function methodForDepth(m: Method, depth: string | null | undefined): Method {
+  if (depth === "deep") return m;
+  return { ...m, stages: m.stages.map((st) => ({ ...st, sections: st.sections.filter((s) => s.depth !== "deep") })) };
+}
+
+/** Есть ли уровень в методе этой глубины */
+export function hasSection(m: Method, key: string) {
+  return m.stages.some((st) => st.sections.some((s) => s.key === key));
+}
+
 export function listMethods(): Method[] {
   return Object.values(METHODS);
 }

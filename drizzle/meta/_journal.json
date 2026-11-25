@@ -71,6 +71,13 @@
       "when": 1795578133454,
       "tag": "0009_export_control_team",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1795584250690,
+      "tag": "0010_plan_depth",
+      "breakpoints": true
     }
   ]
 }

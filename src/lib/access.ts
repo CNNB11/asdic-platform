@@ -3,7 +3,7 @@ import { and, eq } from "drizzle-orm";
 import { notFound } from "next/navigation";
 import { db, schema } from "@/db";
 import { requireUser } from "./auth";
-import { getMethod } from "@/method";
+import { getMethod, methodForDepth } from "@/method";
 
 /** Возвращает план, только если он принадлежит текущему пользователю */
 export async function requirePlan(planId: string) {
@@ -13,7 +13,7 @@ export async function requirePlan(planId: string) {
     .from(schema.plans)
     .where(and(eq(schema.plans.id, planId), eq(schema.plans.ownerId, user.id)));
   if (!plan) notFound();
-  return { user, plan, method: getMethod(plan.methodKey) };
+  return { user, plan, method: methodForDepth(getMethod(plan.methodKey), plan.depth) };
 }
 
 /** Уровень метода по ключу из адреса или 404 */

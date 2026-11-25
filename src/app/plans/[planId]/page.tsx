@@ -2,7 +2,8 @@ import Link from "next/link";
 import { requirePlan } from "@/lib/access";
 import { planClosures, planItems, planSources } from "@/lib/data";
 import { planProgress } from "@/lib/progress";
-import { updatePlan } from "@/app/actions";
+import { setDepth, updatePlan } from "@/app/actions";
+import { DEPTHS, DepthChoice } from "@/components/DepthChoice";
 import { Submit } from "@/components/Submit";
 import { ModeDot } from "@/components/ui";
 
@@ -76,6 +77,19 @@ export default async function Overview({ params }: PageProps<"/plans/[planId]">)
           <ModeDot mode="red" /> решает человек · <ModeDot mode="yellow" /> ИИ делает, человек проверяет · <ModeDot mode="green" /> выборочная проверка. Яркая точка: уровень закрыт. Источников в плане: {sources.length}.
         </p>
       </section>
+
+      <details className="card p-6">
+        <summary className="cursor-pointer text-head">
+          Глубина стратегии: {DEPTHS.find((d) => d.v === plan.depth)?.t ?? "Стандарт"} <span className="cap">· изменить</span>
+        </summary>
+        <form action={setDepth.bind(null, planId)} className="mt-5 grid gap-4">
+          <DepthChoice value={plan.depth} />
+          <p className="cap">Глубокие уровни появятся в этапах и в документах. При возврате на Стандарт они скрываются, но записи в них сохраняются.</p>
+          <div>
+            <Submit>Сохранить</Submit>
+          </div>
+        </form>
+      </details>
 
       <details className="card p-6">
         <summary className="cursor-pointer text-head">Изменить описание плана</summary>

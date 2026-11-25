@@ -49,6 +49,14 @@ export async function renderDocx(m: DocModel): Promise<Buffer> {
       ps.push(new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 300 }, children: [t("Дорожная карта")] }));
       ps.push(table(["Дата", "Что", "Кто"], d.timeline.map((r) => [r.date, r.label, r.owner ?? ""])));
     }
+    const x = d.deep;
+    const r = (n: number) => fmtNum(n >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+    const h2 = (s: string) => new Paragraph({ heading: HeadingLevel.HEADING_2, spacing: { before: 300 }, children: [t(s)] });
+    if (x?.unit) ps.push(h2(`Юнит-экономика: ${x.unit.verdictText.toLowerCase()}`), table(x.unit.cards.map((c) => c.label), [x.unit.cards.map((c) => c.value)]));
+    if (x?.channels) ps.push(h2("Бюджет по каналам"), table(["Канал", "Бюджет в месяц", "Заявок", "Продаж"], x.channels.rows.map((c) => [c.channel, `${fmtNum(Math.round(c.budget))} ${x.channels!.currency}`, r(c.leads), c.sales != null ? r(c.sales) : "—"])));
+    if (x?.scenarios) ps.push(h2(`Сценарии «что если» (база: ${r(x.scenarios.base)} заявок в день)`), table(["Сценарий", "Заявок в день", "Комментарий"], x.scenarios.rows.map((c) => [c.name, r(c.leadsDay), c.comment])));
+    if (x?.benchmarks) ps.push(h2("Бенчмарки ниши"), table(["Показатель", "В нише", "У нас"], x.benchmarks.map((b) => [b.metric, b.niche, b.ours || "—"])));
+    if (x?.content) ps.push(h2("Контент-план на 90 дней"), table(["Неделя", "Тема", "Канал", "Формат", "Призыв"], x.content.map((c) => [c.week, c.topic, c.channel, c.format, c.cta])));
     ps.push(new Paragraph({ children: [new PageBreak()] }));
   }
   for (const p of docParts(m)) {

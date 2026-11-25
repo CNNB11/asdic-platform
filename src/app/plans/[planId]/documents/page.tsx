@@ -12,6 +12,7 @@ import { DEFAULT_NDA } from "@/lib/export/html";
 import { Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
 import { itemTitle } from "@/method";
+import { THEMES } from "@/lib/export/themes";
 
 const FORMATS = [
   { f: "pdf", t: "PDF" },
@@ -57,8 +58,8 @@ export default async function DocumentsPage({ params, searchParams }: PageProps<
       />
       <details className="card p-5" open={!plan.brand}>
         <summary className="cursor-pointer text-head">Оформление документа</summary>
-        <p className="cap mt-2">Логотип, данные на обложке и цвет применяются ко всем документам при следующей сборке.</p>
-        <BrandForm action={saveBrand.bind(null, planId)} brand={plan.brand ?? {}} paid={paid} logoUrl={plan.brand?.logoKey ? `/api/plans/${planId}/logo?v=${plan.brand.logoKey}` : null} ndaDefault={DEFAULT_NDA} />
+        <p className="cap mt-2">Тема, логотип, данные на обложке и цвет применяются ко всем документам при следующей сборке.</p>
+        <BrandForm action={saveBrand.bind(null, planId)} brand={plan.brand ?? {}} paid={paid} hasBoard={visuals.some(({ v }) => (v.verdict === "accepted" || v.verdict === "base") && !!(v.meta?.palettes?.length || v.meta?.fonts?.length))} logoUrl={plan.brand?.logoKey ? `/api/plans/${planId}/logo?v=${plan.brand.logoKey}` : null} ndaDefault={DEFAULT_NDA} />
       </details>
       <section className="card p-5">
         <div className="flex flex-wrap items-baseline justify-between gap-3">
@@ -191,6 +192,16 @@ function DocBlock({
               </form>
             </li>
           ))}
+          {stageKey === "full" && (
+            <li className="cap flex flex-wrap gap-x-3 gap-y-1 pt-1">
+              Посмотреть v{list[0].version} в другой теме:
+              {THEMES.map((t) => (
+                <a key={t.key} href={`/api/plans/${planId}/documents/${list[0].id}/html?theme=${t.key}`} target="_blank" rel="noreferrer" className="link">
+                  {t.label}
+                </a>
+              ))}
+            </li>
+          )}
         </ul>
       )}
     </section>

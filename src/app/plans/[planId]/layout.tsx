@@ -6,13 +6,14 @@ import { TopBar } from "@/components/TopBar";
 import { db, schema } from "@/db";
 import { eq } from "drizzle-orm";
 import { overdue } from "@/lib/control";
+import { hasSection } from "@/method";
 
 export default async function PlanLayout({ children, params }: LayoutProps<"/plans/[planId]">) {
   const { planId } = await params;
   const { user, plan, method } = await requirePlan(planId);
   const items = await planItems(planId);
   const prog = planProgress(method, items, await planClosures(planId));
-  const toReview = items.filter((i) => i.reviewStatus === "unreviewed").length;
+  const toReview = items.filter((i) => i.reviewStatus === "unreviewed" && hasSection(method, i.sectionKey)).length;
   const goals = items.filter((i) => i.sectionKey === "goals" && i.reviewStatus === "signed").map((i) => i.id);
   const late = plan.control ? overdue(plan.control, goals, await db.select({ itemId: schema.goalCheckins.itemId, periodDate: schema.goalCheckins.periodDate }).from(schema.goalCheckins).where(eq(schema.goalCheckins.planId, planId))) : null;
   const base = `/plans/${planId}`;
@@ -22,6 +23,7 @@ export default async function PlanLayout({ children, params }: LayoutProps<"/pla
         <div className="flex min-w-0 items-center gap-3">
           <span className="truncate text-head">{plan.title}</span>
           <span className="chip hidden md:inline-flex">Текущий этап: {prog.current.stage.title}</span>
+          <span className="chip hidden md:inline-flex">{plan.depth === "deep" ? "Глубокая" : "Стандарт"}</span>
         </div>
       </TopBar>
       <div className="mx-auto flex max-w-7xl flex-col md:flex-row">
