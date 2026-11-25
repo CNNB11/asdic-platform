@@ -10,14 +10,16 @@ import { requirePlan } from "@/lib/access";
 import { newId } from "@/lib/ids";
 import { extractText, storeFile, validateFile } from "@/lib/sources";
 import { runCritique, runDraft, runImprove, summarizeSource, type DraftResult, type ImproveResult, type OptionsResult, type Scope } from "@/lib/ai/ops";
-import { buildStageMarkdown } from "@/lib/export/markdown";
+import { buildFullMarkdown, buildStageMarkdown } from "@/lib/export/markdown";
 import { metered } from "@/lib/ai/telemetry";
 import { displayValue, findSection, type Section } from "@/method";
 import { ASDIC } from "@/method/asdic";
-import { CreditsError, canCreatePlan, ensureFor } from "@/lib/billing/credits";
+import { CreditsError, canCreatePlan, ensureFor, isPaidUser } from "@/lib/billing/credits";
 import { SIGNUP_CREDITS, draftKind } from "@/lib/billing/tiers";
+import { normalizeNumInput } from "@/lib/num";
+import { deriveValues } from "@/lib/goalMath";
 
-export type FormState = { error?: string } | undefined;
+export type FormState = { error?: string; ok?: boolean } | undefined;
 
 // ---------- вход ----------
 
@@ -94,9 +96,15 @@ function readValues(section: Section, fd: FormData, prefix = "f_") {
   for (const f of section.fields) {
     const raw = fd.get(`${prefix}${f.key}`);
     if (f.type === "bool") values[f.key] = raw === "on" || raw === "true";
+    else if (f.type === "number") values[f.key] = normalizeNumInput(String(raw ?? "")) ?? String(raw ?? "").trim();
     else values[f.key] = String(raw ?? "").trim();
   }
   return values;
+}
+
+/** Числовые поля, в которых не число: «48 млн» вместо 48 */
+function badNumbers(section: Section, values: Record<string, unknown>) {
+  return section.fields.filter((f) => f.type === "number" && String(values[f.key] ?? "") !== "" && normalizeNumInput(String(values[f.key])) === null).map((f) => f.label);
 }
 
 function missingRequired(section: Section, values: Record<string, unknown>) {
@@ -123,9 +131,11 @@ async function enforceUnique(planId: string, section: Section, keepId: string, v
 export async function saveItem(planId: string, sectionKey: string, itemId: string | null, _: FormState, fd: FormData): Promise<FormState> {
   const { user, plan, method } = await requirePlan(planId);
   const { section } = findSection(method, sectionKey);
-  const values = readValues(section, fd);
+  const values = deriveValues(sectionKey, readValues(section, fd));
   const missing = missingRequired(section, values);
   if (missing.length) return { error: `Заполните: ${missing.join(", ")}` };
+  const bad = badNumbers(section, values);
+  if (bad.length) return { error: `Нужно число (без слов, единицу пишите отдельно): ${bad.join(", ")}` };
   const now = new Date();
   const red = section.mode === "red";
   let decision = null as typeof schema.items.$inferSelect.decision;
@@ -401,7 +411,18 @@ export async function ackCritique(planId: string, opId: string) {
 
 export async function generateDocument(planId: string, stageKey: string) {
   const { user, plan, method } = await requirePlan(planId);
-  const { model, markdown } = await buildStageMarkdown(plan, method, stageKey, user.name);
+  const paid = isPaidUser(user);
+  const { model, markdown } = stageKey === "full" ? await buildFullMarkdown(plan, method, user.name, paid) : await buildStageMarkdown(plan, method, stageKey, user.name, paid);
+  if (stageKey === "full") {
+    // Слой «для тех, кто сканирует»: пишет ИИ. Нет кредитов или ИИ недоступен — документ собирается без него.
+    try {
+      await ensureFor(user, "doc_digest");
+      const { buildDigest } = await import("@/lib/export/digest");
+      model.digest = (await buildDigest(plan, method, user.id)) ?? undefined;
+    } catch (e) {
+      console.error("digest", e instanceof Error ? e.message : e);
+    }
+  }
   const [{ v }] = await db
     .select({ v: max(schema.documents.version) })
     .from(schema.documents)
@@ -416,6 +437,53 @@ export async function deleteDocuments(planId: string, ids: string[]) {
   await requirePlan(planId);
   if (ids.length) await db.delete(schema.documents).where(and(eq(schema.documents.planId, planId), inArray(schema.documents.id, ids)));
   revalidatePath(`/plans/${planId}/documents`);
+}
+
+const LOGO_TYPES: Record<string, { ext: string; check: (b: Buffer) => boolean }> = {
+  "image/png": { ext: ".png", check: (b) => b.subarray(1, 4).toString("latin1") === "PNG" },
+  "image/jpeg": { ext: ".jpg", check: (b) => b[0] === 0xff && b[1] === 0xd8 },
+  "image/svg+xml": { ext: ".svg", check: (b) => /<svg[\s>]/i.test(b.subarray(0, 4096).toString("utf8")) },
+};
+
+/** Оформление выгрузки: логотип, данные обложки, цвет. Гриф NDA только на платном тарифе. */
+export async function saveBrand(planId: string, _: FormState, fd: FormData): Promise<FormState> {
+  const { user, plan } = await requirePlan(planId);
+  const paid = isPaidUser(user);
+  const brand = { ...(plan.brand ?? {}) };
+  const str = (k: string, n: number) => String(fd.get(k) ?? "").trim().slice(0, n);
+  brand.companyName = str("companyName", 120);
+  brand.preparedFor = str("preparedFor", 160);
+  brand.contact = str("contact", 500);
+  const accent = str("accent", 7);
+  brand.accent = /^#[0-9a-f]{6}$/i.test(accent) ? accent : undefined;
+  brand.confidential = paid && fd.get("confidential") === "on";
+  brand.ndaText = paid ? str("ndaText", 1200) : brand.ndaText;
+  if (fd.get("removeLogo") === "on") {
+    brand.logoKey = undefined;
+    brand.logoMime = undefined;
+  }
+  const file = fd.get("logo");
+  if (file instanceof File && file.size > 0) {
+    if (file.size > 2 * 1024 * 1024) return { error: "Логотип больше 2 МБ" };
+    const type = LOGO_TYPES[file.type];
+    const bytes = Buffer.from(await file.arrayBuffer());
+    if (!type || !type.check(bytes)) return { error: "Логотип: подойдёт PNG, JPG или SVG" };
+    let data = bytes;
+    if (file.type === "image/svg+xml") {
+      // SVG показывается как картинка, но скрипты и ссылки всё равно вырезаем
+      const { sanitizeSvg } = await import("@/lib/images/sanitize");
+      try {
+        data = Buffer.from(sanitizeSvg(bytes.toString("utf8"), ""), "utf8");
+      } catch {
+        return { error: "Логотип: SVG не читается" };
+      }
+    }
+    brand.logoKey = await storeFile(data, type.ext);
+    brand.logoMime = file.type;
+  }
+  await db.update(schema.plans).set({ brand, updatedAt: new Date() }).where(eq(schema.plans.id, planId));
+  revalidatePath(`/plans/${planId}/documents`);
+  return { ok: true };
 }
 
 // ---------- этапы ----------

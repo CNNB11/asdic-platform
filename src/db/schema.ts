@@ -1,4 +1,4 @@
-import { boolean, customType, integer, jsonb, pgTable, text, timestamp } from "drizzle-orm/pg-core";
+import { boolean, customType, integer, jsonb, pgTable, text, timestamp, uniqueIndex } from "drizzle-orm/pg-core";
 
 const bytea = customType<{ data: Buffer; driverData: Buffer }>({ dataType: () => "bytea" });
 
@@ -58,9 +58,51 @@ export const plans = pgTable("plans", {
   pointA: text("point_a").notNull().default(""),
   pointB: text("point_b").notNull().default(""),
   language: text("language").notNull().default("ru"),
+  /** Оформление выгрузки: логотип, данные на обложке, цвет, гриф NDA */
+  brand: jsonb("brand").$type<PlanBrand>(),
+  /** Контроль: окно сверок после закрытия Strategy */
+  control: jsonb("control").$type<PlanControl>(),
+  /** Команда: какие роли есть, каких нет и как закрыть */
+  team: jsonb("team").$type<TeamRole[]>(),
   createdAt: ts("created_at"),
   updatedAt: ts("updated_at"),
 });
+
+export interface PlanBrand {
+  /** Ключ файла логотипа в таблице files */
+  logoKey?: string;
+  logoMime?: string;
+  /** Название компании на обложке (если пусто, берётся название плана) */
+  companyName?: string;
+  /** Для кого подготовлено: инвестор, совет директоров, партнёр */
+  preparedFor?: string;
+  /** Контакты на последней странице */
+  contact?: string;
+  /** Цвет акцента документа, HEX */
+  accent?: string;
+  /** Гриф «Конфиденциально» на каждой странице (платные тарифы) */
+  confidential?: boolean;
+  /** Текст уведомления о конфиденциальности */
+  ndaText?: string;
+}
+
+export interface PlanControl {
+  /** week | month | quarter */
+  window: "week" | "month" | "quarter";
+  /** С какой даты считаются сверки, ГГГГ-ММ-ДД */
+  startAt: string;
+  enabledBy: string;
+}
+
+export interface TeamRole {
+  key: string;
+  label: string;
+  /** have — есть в команде, partial — частично (совмещает), missing — нет */
+  status: "have" | "partial" | "missing";
+  name?: string;
+  /** Как закрыть роль, если её нет: hire | freelance | agency | train | owner */
+  cover?: string;
+}
 
 /** origin: manual | ai_sources | ai_web | ai_improve
  *  reviewStatus: unreviewed | approved (жёлтые/зелёные) ; signed (красные решения) */
@@ -160,6 +202,23 @@ export const documents = pgTable("documents", {
   createdBy: text("created_by").notNull(),
   createdAt: ts("created_at"),
 });
+
+/** Факт по цели на дату сверки Контроля. Одна запись на цель и дату. */
+export const goalCheckins = pgTable(
+  "goal_checkins",
+  {
+    id: id(),
+    planId: text("plan_id").notNull().references(() => plans.id, { onDelete: "cascade" }),
+    itemId: text("item_id").notNull().references(() => items.id, { onDelete: "cascade" }),
+    /** Дата сверки, ГГГГ-ММ-ДД */
+    periodDate: text("period_date").notNull(),
+    value: text("value").notNull(),
+    note: text("note").notNull().default(""),
+    createdBy: text("created_by").notNull(),
+    createdAt: ts("created_at"),
+  },
+  (t) => [uniqueIndex("goal_checkins_item_period").on(t.itemId, t.periodDate)],
+);
 
 /** Переход к следующему этапу делает человек */
 export const stageClosures = pgTable("stage_closures", {

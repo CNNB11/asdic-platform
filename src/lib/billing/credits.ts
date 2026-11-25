@@ -12,6 +12,11 @@ export function isAdminEmail(email: string) {
   return admins.includes(email.toLowerCase());
 }
 
+/** Платный тариф (или админ): белый лейбл, гриф NDA, без водяного знака в выгрузке */
+export function isPaidUser(user: Pick<User, "email" | "tier">) {
+  return isAdminEmail(user.email) || tierOf(user.tier).key !== "free";
+}
+
 const ACTIVE = ["active", "trialing"];
 const MONTH = sql`interval '1 month'`;
 

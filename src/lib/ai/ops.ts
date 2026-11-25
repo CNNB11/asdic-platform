@@ -1,4 +1,5 @@
 import "server-only";
+import { normalizeNumInput } from "@/lib/num";
 import { and, asc, eq } from "drizzle-orm";
 import { db, schema } from "@/db";
 import { newId } from "@/lib/ids";
@@ -101,6 +102,7 @@ function coerceValues(section: Section, v: Record<string, unknown>) {
   for (const f of section.fields) {
     const x = v[f.key];
     if (f.type === "bool") out[f.key] = x === true || x === "true";
+    else if (f.type === "number" && x != null && x !== "") out[f.key] = normalizeNumInput(String(x)) ?? String(x).trim();
     else out[f.key] = typeof x === "string" ? x.trim() : x == null ? "" : String(x);
   }
   return out;

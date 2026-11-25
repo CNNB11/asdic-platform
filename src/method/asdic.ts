@@ -23,10 +23,48 @@ const rationale: FieldDef = {
   evidence: "recommended",
 };
 
+/** Роли исполнителей. Клиент отмечает, какие есть в команде, а каких нет; действия плана назначаются на роль. */
+export const ROLES: { value: string; label: string }[] = [
+  { value: "owner", label: "Собственник или директор" },
+  { value: "marketer", label: "Маркетолог" },
+  { value: "designer", label: "Дизайнер" },
+  { value: "copywriter", label: "Копирайтер или редактор" },
+  { value: "smm", label: "SMM-специалист" },
+  { value: "ads", label: "Таргетолог или специалист по рекламе" },
+  { value: "seo", label: "SEO-специалист" },
+  { value: "web", label: "Веб-разработчик" },
+  { value: "sales", label: "Продавец или менеджер по продажам" },
+  { value: "account", label: "Менеджер по работе с клиентами" },
+  { value: "analyst", label: "Аналитик" },
+  { value: "pr", label: "PR-менеджер" },
+  { value: "content", label: "Фото и видео" },
+  { value: "product", label: "Продакт или технолог" },
+  { value: "finance", label: "Бухгалтер или финансист" },
+  { value: "lawyer", label: "Юрист" },
+  { value: "logistics", label: "Логистика и склад" },
+];
+
+/** На чём продукт выигрывает у конкурентов. Если цене клиент уже не главное, продуктом становится скорость, сервис, гарантия. */
+const WIN_FACTORS = [
+  { value: "price", label: "Лучшая цена" },
+  { value: "quality", label: "Качество" },
+  { value: "speed", label: "Скорость и сроки" },
+  { value: "volume", label: "Объёмы и наличие" },
+  { value: "delivery", label: "Доставка" },
+  { value: "payment", label: "Гибкость оплаты" },
+  { value: "service", label: "Сервис и поддержка" },
+  { value: "expertise", label: "Экспертиза" },
+  { value: "status", label: "Статус и престиж" },
+  { value: "reliability", label: "Надёжность и гарантии" },
+  { value: "custom", label: "Индивидуальность" },
+  { value: "convenience", label: "Удобство" },
+  { value: "responsibility", label: "Экологичность и ответственность" },
+];
+
 export const ASDIC: Method = {
   key: "asdic",
   name: "ASDIC™",
-  version: "0.3.0",
+  version: "0.4.0",
   author: "SWISSIN",
   stages: [
     {
@@ -153,6 +191,41 @@ export const ASDIC: Method = {
             "Есть хотя бы один новый или косвенный игрок",
             "Указаны цвета и символы бренда",
           ],
+        },
+        {
+          key: "niche_problems",
+          title: "Проблемы ниши",
+          description:
+            "Чем недовольны клиенты рынка. Делим клиентов по тому, у какого лидера они покупают, и по типу, собираем жалобы и неудовлетворённые потребности из отзывов, форумов и интервью. Решённая проблема становится продуктом в Design.",
+          mode: "yellow",
+          itemLabel: "Проблема",
+          itemLabelPlural: "Проблемы",
+          titleField: "problem",
+          draftLimit: 6,
+          fields: [
+            { key: "problem", label: "Проблема клиента", type: "text", required: true, placeholder: "Например: поставщик срывает сроки в сезон" },
+            { key: "whose", label: "Чьи клиенты", help: "У какого лидера рынка или типа поставщика покупают клиенты с этой проблемой.", type: "text", required: true },
+            { key: "client_type", label: "Тип клиента", type: "enum", options: [{ value: "b2b", label: "B2B" }, { value: "b2c", label: "B2C" }, { value: "both", label: "B2B и B2C" }] },
+            { key: "evidence", label: "Где это видно", help: "Отзывы, форумы, интервью, жалобы в соцсетях. Дословные цитаты сильнее пересказа.", type: "longtext", required: true, evidence: "recommended" },
+            { key: "pain", label: "Насколько больно", type: "enum", required: true, options: [{ value: "high", label: "Сильно: уходят к другим или переплачивают" }, { value: "medium", label: "Заметно: жалуются, но терпят" }, { value: "low", label: "Слабо: мелкое неудобство" }] },
+            { key: "now", label: "Как сейчас решают лидеры", type: "longtext" },
+            { key: "can_solve", label: "Можем ли решить", type: "enum", options: [{ value: "yes", label: "Да" }, { value: "partly", label: "Частично" }, { value: "no", label: "Нет" }] },
+          ],
+          requirements: [
+            { min: 2, label: "Не меньше 2 проблем" },
+            { min: 1, where: { field: "pain", equals: "high" }, label: "Хотя бы 1 сильная боль" },
+          ],
+          rubric: [
+            "Проблема сформулирована словами клиента, а не продавца",
+            "Есть подтверждение из отзывов или интервью",
+            "Понятно, у чьих клиентов она возникает",
+          ],
+          ai: {
+            cta: "Найти проблемы ниши",
+            intro:
+              "ИИ разделит клиентов рынка по лидерам и типам, найдёт жалобы и неудовлетворённые потребности в отзывах, на форумах и в ваших источниках и оценит, насколько это больно. Лучше всего работает с поиском в интернете.",
+            task: `Найди проблемы клиентов в этой нише. Раздели клиентов по тому, у какого лидера рынка или типа поставщика они покупают (возьми конкурентов из плана) и по типу клиента. Для каждой группы найди жалобы и неудовлетворённые потребности: отзывы, форумы, обсуждения, интервью из источников. Пиши проблему словами клиента. Оцени боль: high, если из-за неё уходят или переплачивают. Отметь, решают ли её лидеры и может ли решить эта компания. Не придумывай жалобы без подтверждения.`,
+          },
         },
         {
           key: "company",
@@ -295,6 +368,43 @@ export const ASDIC: Method = {
       errorCost: "Самая дорогая ошибка в системе.",
       sections: [
         {
+          key: "goal_math",
+          title: "Расчёт цели",
+          description:
+            "Сколько нужно продавать, чтобы прийти к желаемому доходу. Вписываете доход к сроку, средний чек и конверсию, платформа считает продажи, заявки и обращения в месяц и в день и говорит, насколько это реально. Решает человек.",
+          mode: "red",
+          itemLabel: "Расчёт",
+          itemLabelPlural: "Расчёты",
+          titleField: "revenue_target",
+          draftLimit: 3,
+          fields: [
+            { key: "revenue_target", label: "Желаемый доход за период", type: "number", required: true, placeholder: "90000000" },
+            { key: "currency", label: "Валюта", type: "text", placeholder: "₽" },
+            { key: "period_end", label: "К какой дате", type: "date", required: true },
+            { key: "revenue_now", label: "Доход за такой же период сейчас", help: "Нужен для оценки реальности. Если бизнес новый, оставьте пустым.", type: "number" },
+            { key: "avg_check", label: "Средний чек", type: "number", required: true },
+            { key: "lead_conv", label: "Конверсия заявки в продажу, %", type: "number", required: true, placeholder: "20" },
+            { key: "traffic_conv", label: "Конверсия обращения или визита в заявку, %", type: "number", placeholder: "3" },
+            { key: "work_days", label: "Рабочих дней в месяце", type: "number", placeholder: "22" },
+            { key: "result", label: "Результат расчёта", help: "Считается автоматически при сохранении.", type: "longtext" },
+            {
+              key: "verdict",
+              label: "Реалистичность",
+              help: "Считается автоматически: сравнение нужных продаж с текущими.",
+              type: "enum",
+              options: [
+                { value: "realistic", label: "Реально" },
+                { value: "stretch", label: "Напряжённо" },
+                { value: "unrealistic", label: "Нереально без изменений" },
+                { value: "unknown", label: "Не с чем сравнить" },
+              ],
+            },
+            { key: "what_change", label: "Что меняем, чтобы цель стала реальной", help: "Средний чек, конверсия, новые сегменты, срок.", type: "longtext" },
+          ],
+          requirements: [{ min: 1, label: "Подписанный расчёт" }],
+          rubric: ["Средний чек и конверсия взяты из данных, а не на глаз", "Если цель нереальна, записано, что меняем"],
+        },
+        {
           key: "goals",
           title: "Цели с цифрами",
           description: "Куда именно и к какому сроку. Пока нет данных, любая цель и стратегия — гипотеза, которую предстоит проверить. Решает человек.",
@@ -306,13 +416,14 @@ export const ASDIC: Method = {
           fields: [
             { key: "goal", label: "Цель", type: "text", required: true },
             { key: "metric", label: "Показатель", type: "text", required: true },
-            { key: "current", label: "Сейчас (точка A)", type: "text", required: true },
-            { key: "target", label: "Цель (точка B)", type: "text", required: true },
+            { key: "unit", label: "Единица", type: "text", placeholder: "заявок в месяц, млн ₽, %" },
+            { key: "current", label: "Сейчас (точка A), число", type: "number", required: true },
+            { key: "target", label: "Цель (точка B), число", help: "Конкретное число: с ним Контроль будет сверять факт.", type: "number", required: true },
             { key: "deadline", label: "Срок", type: "date", required: true },
             rationale,
           ],
           requirements: [{ min: 1, label: "Хотя бы 1 подписанная цель" }],
-          rubric: ["Цель измерима и имеет срок", "Цель связана с главной проблемой роста", "Текущее значение взято из анализа"],
+          rubric: ["Цель измерима и имеет срок", "Цель связана с главной проблемой роста", "Текущее значение взято из анализа", "Цифры согласованы с расчётом цели"],
         },
         {
           key: "segments",
@@ -422,7 +533,8 @@ export const ASDIC: Method = {
         {
           key: "product",
           title: "Продукт и упаковка",
-          description: "Что именно делаем для этого сегмента: состав, функции, формат, уровень сервиса и упаковка. Решает человек.",
+          description:
+            "Ценностное предложение: какую проблему ниши решаем, каким продуктом и на чём выигрываем у лидеров. Для клиентов, которым цена уже не главное, продуктом становится скорость, сервис, гарантия или гибкая оплата. Решает человек.",
           mode: "red",
           itemLabel: "Решение о продукте",
           itemLabelPlural: "Решения",
@@ -431,11 +543,34 @@ export const ASDIC: Method = {
           fields: [
             { key: "name", label: "Продукт или услуга", type: "text", required: true },
             { key: "segment", label: "Для какого сегмента", type: "text", required: true },
+            { key: "problem", label: "Какую проблему ниши решаем", help: "Из уровня «Проблемы ниши».", type: "text", required: true },
+            {
+              key: "product_type",
+              label: "Тип продукта",
+              type: "enum",
+              required: true,
+              options: [
+                { value: "service", label: "Услуга" },
+                { value: "physical", label: "Физический товар" },
+                { value: "digital", label: "Цифровой продукт" },
+                { value: "mixed", label: "Товар плюс услуга" },
+                { value: "subscription", label: "Подписка или сервисный контракт" },
+              ],
+            },
+            { key: "factor_1", label: "Главное, на чём выигрываем", type: "enum", required: true, options: WIN_FACTORS },
+            { key: "factor_2", label: "Второе", type: "enum", options: WIN_FACTORS },
+            { key: "factor_3", label: "Третье", type: "enum", options: WIN_FACTORS },
+            { key: "factor_how", label: "Как выигрыш становится продуктом", help: "Например, «скорость»: отгрузка за 24 часа с неустойкой за опоздание. Чем докажем клиенту.", type: "longtext", required: true },
             { key: "content", label: "Состав, функции, формат, сервис", type: "longtext", required: true },
             rationale,
           ],
           requirements: [{ min: 1, label: "Подписанное решение" }],
-          rubric: ["Продукт отвечает на причины покупки сегмента", "Соответствует позиционированию"],
+          rubric: [
+            "Продукт решает проблему ниши с сильной болью",
+            "Выбрано не больше трёх факторов выигрыша, и лидеры рынка по ним слабее",
+            "Каждый фактор превращён в конкретное обещание, которое можно проверить",
+            "Соответствует позиционированию",
+          ],
         },
         {
           key: "offer",
@@ -714,12 +849,13 @@ export const ASDIC: Method = {
           draftLimit: 5,
           fields: [
             { key: "what", label: "Что делаем", type: "text", required: true },
-            { key: "owner", label: "Кто", type: "text", required: true },
+            { key: "owner", label: "Роль исполнителя", help: "Каких ролей нет в команде, видно на странице «Команда».", type: "enum", required: true, options: ROLES },
+            { key: "owner_name", label: "Кто конкретно", help: "Имя, подрядчик или «нанять». Необязательно.", type: "text" },
             { key: "deadline", label: "Срок", type: "date", required: true },
             { key: "budget", label: "Бюджет", type: "text" },
           ],
           requirements: [{ min: 1, label: "Хотя бы 1 действие" }],
-          rubric: ["У действия есть ответственный и срок", "Действие повторяет язык, заданный в Design"],
+          rubric: ["У действия есть роль исполнителя и срок", "Если роли нет в команде, указано, как её закрыть", "Действие повторяет язык, заданный в Design"],
         },
         {
           key: "launch",
