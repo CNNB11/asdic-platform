@@ -4,12 +4,38 @@ import type { FormState } from "@/app/actions";
 import type { PlanBrand } from "@/db/schema";
 import { ErrorNote } from "./ui";
 import { Submit } from "./Submit";
+import { THEMES } from "@/lib/export/themes";
 
 /** Оформление выгрузки: логотип, данные обложки, цвет и гриф NDA */
-export function BrandForm({ action, brand, paid, logoUrl, ndaDefault }: { action: (s: FormState, fd: FormData) => Promise<FormState>; brand: PlanBrand; paid: boolean; logoUrl: string | null; ndaDefault: string }) {
+export function BrandForm({ action, brand, paid, logoUrl, ndaDefault, hasBoard }: { action: (s: FormState, fd: FormData) => Promise<FormState>; brand: PlanBrand; paid: boolean; logoUrl: string | null; ndaDefault: string; hasBoard: boolean }) {
+  const current = brand.theme ?? "minimal";
   const [state, act] = useActionState(action, undefined);
   return (
     <form action={act} className="mt-4 grid gap-4">
+      <fieldset className="grid gap-2">
+        <legend className="text-head">Тема оформления</legend>
+        <div className="grid gap-2 sm:grid-cols-2">
+          {THEMES.map((t) => (
+            <label key={t.key} className="card flex cursor-pointer gap-3 p-3 has-[:checked]:border-head">
+              <input type="radio" name="theme" value={t.key} defaultChecked={current === t.key} className="mt-1 accent-white" />
+              <span className="grid gap-1">
+                <span className="flex items-center gap-2 text-head">
+                  <i className="inline-block size-3 rounded-full" style={{ background: t.accent === "#141414" ? "#f4f4f2" : t.accent }} />
+                  {t.label}
+                </span>
+                <span className="cap">{t.hint}</span>
+              </span>
+            </label>
+          ))}
+        </div>
+        <label className="flex items-start gap-2 cap">
+          <input type="checkbox" name="autoStyle" defaultChecked={brand.autoStyle !== false} className="mt-0.5 accent-white" />
+          <span>
+            Взять цвета и шрифты из фирменного стиля плана.{" "}
+            {hasBoard ? "Утверждённый бренд-борд есть: документ будет в его цветах и шрифтах." : "Утверждённого бренд-борда пока нет, будут цвета темы."}
+          </span>
+        </label>
+      </fieldset>
       <div className="grid gap-4 md:grid-cols-2">
         <label className="grid gap-1.5">
           <span className="text-head">Логотип</span>
@@ -29,8 +55,12 @@ export function BrandForm({ action, brand, paid, logoUrl, ndaDefault }: { action
         </label>
         <label className="grid content-start gap-1.5">
           <span className="text-head">Цвет акцента</span>
-          <span className="cap">Полоса на обложке, заголовки разделов и графики.</span>
-          <input type="color" name="accent" defaultValue={brand.accent ?? "#141414"} className="h-10 w-24 cursor-pointer rounded border border-line bg-transparent" />
+          <span className="cap">Полоса на обложке, заголовки разделов и графики. Без галочки цвет берётся из фирменного стиля или темы.</span>
+          <span className="flex items-center gap-3">
+            <input type="checkbox" name="customAccent" defaultChecked={!!brand.accent} className="size-4 accent-white" aria-label="Свой цвет" />
+            <input type="color" name="accent" defaultValue={brand.accent ?? "#1f3a5f"} className="h-10 w-24 cursor-pointer rounded border border-line bg-transparent" />
+            <span className="cap">свой цвет</span>
+          </span>
         </label>
         <label className="grid gap-1.5">
           <span className="text-head">Название компании на обложке</span>

@@ -31,6 +31,29 @@ export function renderMarkdown(m: DocModel): string {
       d.timeline.forEach((r) => out.push(`| ${r.date} | ${r.label} | ${r.owner ?? ""} |`));
       out.push("");
     }
+    const x = d.deep;
+    const r = (n: number) => fmtNum(n >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+    if (x?.unit) out.push(`## Юнит-экономика${x.unit.name ? `: ${x.unit.name}` : ""}`, "", `**${x.unit.verdictText}.** ${x.unit.cards.map((c) => `${c.label}: ${c.value}`).join(" · ")}`, "");
+    if (x?.channels) {
+      out.push("## Бюджет по каналам", "", "| Канал | Бюджет в месяц | Заявок | Продаж |", "| --- | --- | --- | --- |");
+      x.channels.rows.forEach((c) => out.push(`| ${c.channel} | ${fmtNum(Math.round(c.budget))} ${x.channels!.currency} | ${r(c.leads)} | ${c.sales != null ? r(c.sales) : "—"} |`));
+      out.push("");
+    }
+    if (x?.scenarios) {
+      out.push("## Сценарии «что если»", "", `Базовый расчёт: ${r(x.scenarios.base)} заявок в день.`, "", "| Сценарий | Заявок в день | Комментарий |", "| --- | --- | --- |");
+      x.scenarios.rows.forEach((c) => out.push(`| ${c.name} | ${r(c.leadsDay)} | ${c.comment.replace(/\n+/g, " ")} |`));
+      out.push("");
+    }
+    if (x?.benchmarks) {
+      out.push("## Бенчмарки ниши", "", "| Показатель | В нише | У нас |", "| --- | --- | --- |");
+      x.benchmarks.forEach((b) => out.push(`| ${b.metric} | ${b.niche} | ${b.ours || "—"} |`));
+      out.push("");
+    }
+    if (x?.content) {
+      out.push("## Контент-план на 90 дней", "", "| Неделя | Тема | Канал | Формат | Призыв |", "| --- | --- | --- | --- | --- |");
+      x.content.forEach((c) => out.push(`| ${c.week} | ${c.topic} | ${c.channel} | ${c.format} | ${c.cta} |`));
+      out.push("");
+    }
   }
   for (const p of docParts(m)) {
     if (full) out.push(`# ${p.num}. ${p.titleRu} (${p.title})`, "", `*${p.question}*`, "");

@@ -70,6 +70,7 @@ export async function createPlan(fd: FormData) {
     company: String(fd.get("company") ?? "").trim(),
     pointA: String(fd.get("pointA") ?? "").trim(),
     pointB: String(fd.get("pointB") ?? "").trim(),
+    depth: fd.get("depth") === "deep" ? "deep" : "standard",
   });
   redirect(`/plans/${id}`);
 }
@@ -90,6 +91,8 @@ export async function updatePlan(planId: string, fd: FormData) {
 }
 
 // ---------- записи ----------
+
+const planItemsFor = (planId: string) => db.select().from(schema.items).where(eq(schema.items.planId, planId));
 
 function readValues(section: Section, fd: FormData, prefix = "f_") {
   const values: Record<string, unknown> = {};
@@ -131,7 +134,7 @@ async function enforceUnique(planId: string, section: Section, keepId: string, v
 export async function saveItem(planId: string, sectionKey: string, itemId: string | null, _: FormState, fd: FormData): Promise<FormState> {
   const { user, plan, method } = await requirePlan(planId);
   const { section } = findSection(method, sectionKey);
-  const values = deriveValues(sectionKey, readValues(section, fd));
+  const values = deriveValues(sectionKey, readValues(section, fd), await planItemsFor(planId));
   const missing = missingRequired(section, values);
   if (missing.length) return { error: `Заполните: ${missing.join(", ")}` };
   const bad = badNumbers(section, values);
@@ -327,6 +330,7 @@ export async function applyDraft(planId: string, opId: string, fd: FormData) {
   const r = op.result as DraftResult;
   const picked = fd.getAll("pick").map(Number).filter((i) => Number.isInteger(i) && r.items[i]);
   const existing = await db.select().from(schema.items).where(and(eq(schema.items.planId, planId), eq(schema.items.sectionKey, section.key)));
+  const existingAll = await planItemsFor(planId);
   const uniq = section.fields.filter((f) => f.uniqueTrue).map((f) => f.key);
   const taken = new Set(uniq.filter((k) => existing.some((e) => e.values[k] === true)));
   const origin = op.kind === "draft_web" ? "ai_web" : "ai_sources";
@@ -334,7 +338,7 @@ export async function applyDraft(planId: string, opId: string, fd: FormData) {
     const draft = r.items[i];
     // Человек мог поправить поля прямо в ответе ИИ: берём то, что пришло из формы
     const edited = fd.has(`d${i}__edit`) ? readValues(section, fd, `d${i}_`) : null;
-    const values = edited ? { ...draft.values, ...edited } : { ...draft.values };
+    const values = deriveValues(section.key, edited ? { ...draft.values, ...edited } : { ...draft.values }, existingAll);
     for (const k of uniq) {
       if (values[k] === true) {
         if (taken.has(k)) values[k] = false;
@@ -455,7 +459,10 @@ export async function saveBrand(planId: string, _: FormState, fd: FormData): Pro
   brand.preparedFor = str("preparedFor", 160);
   brand.contact = str("contact", 500);
   const accent = str("accent", 7);
-  brand.accent = /^#[0-9a-f]{6}$/i.test(accent) ? accent : undefined;
+  brand.accent = fd.get("customAccent") === "on" && /^#[0-9a-f]{6}$/i.test(accent) ? accent : undefined;
+  const theme = str("theme", 20);
+  brand.theme = ["consulting", "startup", "premium", "minimal"].includes(theme) ? theme : "minimal";
+  brand.autoStyle = fd.get("autoStyle") === "on";
   brand.confidential = paid && fd.get("confidential") === "on";
   brand.ndaText = paid ? str("ndaText", 1200) : brand.ndaText;
   if (fd.get("removeLogo") === "on") {
@@ -727,7 +734,7 @@ export async function fixConflict(planId: string, opId: string, conflictId: stri
   if (!it) return;
   const proposed = String(fd.get("value") ?? c.fix.proposed).trim() || c.fix.proposed;
   const { section } = findSection(method, it.sectionKey);
-  const values = deriveValues(it.sectionKey, { ...it.values, [c.fix.field]: section.fields.find((f) => f.key === c.fix!.field)?.type === "number" ? (normalizeNumInput(proposed) ?? proposed) : proposed });
+  const values = deriveValues(it.sectionKey, { ...it.values, [c.fix.field]: section.fields.find((f) => f.key === c.fix!.field)?.type === "number" ? (normalizeNumInput(proposed) ?? proposed) : proposed }, await planItemsFor(planId));
   const now = new Date();
   await db
     .update(schema.items)
@@ -751,4 +758,14 @@ export async function markConflictFixed(planId: string, opId: string, conflictId
   const { user } = await requirePlan(planId);
   await updateConflict(planId, opId, conflictId, { status: "fixed", note: `Исправлено вручную, ${user.name}` });
   revalidatePath(`/plans/${planId}/check`);
+}
+
+// ---------- глубина стратегии ----------
+
+/** Стандарт или Глубокая. Записи глубоких уровней не удаляются: при возврате на Глубокую они снова видны. */
+export async function setDepth(planId: string, fd: FormData) {
+  await requirePlan(planId);
+  const depth = fd.get("depth") === "deep" ? "deep" : "standard";
+  await db.update(schema.plans).set({ depth, updatedAt: new Date() }).where(eq(schema.plans.id, planId));
+  revalidatePath(`/plans/${planId}`, "layout");
 }

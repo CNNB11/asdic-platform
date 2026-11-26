@@ -65,10 +65,94 @@ export function calcGoal(v: Record<string, unknown>, today = new Date()): GoalMa
   };
 }
 
-/** Поля, которые платформа считает сама при сохранении записи */
-export function deriveValues(sectionKey: string, values: Record<string, unknown>) {
-  if (sectionKey !== "goal_math") return values;
-  const m = calcGoal(values);
-  if (!m) return values;
-  return { ...values, result: m.text, verdict: m.verdict };
+const r1 = (n: number) => fmtNum(n >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+
+/** Юнит-экономика: маржа с продажи, LTV, LTV/CAC, окупаемость, безубыточность */
+export function calcUnit(v: Record<string, unknown>) {
+  const check = parseNum(v.avg_check);
+  const margin = parseNum(v.margin_pct);
+  const cac = parseNum(v.cac);
+  if (!check || margin == null || cac == null) return null;
+  const perYear = parseNum(v.purchases_year) || 1;
+  const years = parseNum(v.years) || 1;
+  const cur = String(v.currency ?? "").trim();
+  const c = (n: number) => `${r1(n)}${cur ? " " + cur : ""}`;
+  const profit = (check * margin) / 100;
+  const ltv = profit * perYear * years;
+  const ratio = cac > 0 ? ltv / cac : Infinity;
+  const paybackSales = profit > 0 ? cac / profit : Infinity;
+  const paybackMonths = Number.isFinite(paybackSales) ? (paybackSales / perYear) * 12 : Infinity;
+  const fixed = parseNum(v.fixed_month);
+  const breakeven = fixed && profit > 0 ? fixed / profit : null;
+  const verdict = ratio >= 3 ? "healthy" : ratio >= 1 ? "thin" : "loss";
+  const text = [
+    `Маржа с одной продажи: ${c(profit)}. Ценность клиента за всё время (LTV): ${c(ltv)}.`,
+    `LTV/CAC: ${Number.isFinite(ratio) ? fmtNum(Math.round(ratio * 10) / 10) : "∞"}. ${verdict === "healthy" ? "Здоровая экономика: клиент приносит в 3 раза больше, чем стоит." : verdict === "thin" ? "На грани: клиент окупается, но запаса мало." : "Убыточно: клиент приносит меньше, чем стоит его привлечение."}`,
+    Number.isFinite(paybackMonths) ? `Привлечение клиента окупается за ${r1(paybackSales)} покупки, примерно ${r1(paybackMonths)} мес.` : "Привлечение не окупается: маржа с продажи нулевая.",
+    breakeven != null ? `Точка безубыточности: ${r1(breakeven)} продаж в месяц, чтобы покрыть постоянные расходы.` : "",
+  ].filter(Boolean);
+  return { profit, ltv, ratio, paybackMonths, breakeven, verdict, text: text.join("\n") };
+}
+
+/** Сценарий «что если» от расчёта цели: сколько продаж и заявок понадобится при другой цене или конверсии */
+export function calcScenario(v: Record<string, unknown>, base: Record<string, unknown> | undefined) {
+  if (!base) return null;
+  const b = calcGoal(base);
+  if (!b) return null;
+  const pc = parseNum(v.price_change) ?? 0;
+  const cc = parseNum(v.conv_change) ?? 0;
+  const check = (parseNum(base.avg_check) ?? 0) * (1 + pc / 100);
+  const conv = (parseNum(base.lead_conv) ?? 0) * (1 + cc / 100);
+  const s = calcGoal({ ...base, avg_check: String(check), lead_conv: String(conv) });
+  if (!s) return null;
+  const d = (x: number, y: number) => `${x >= y ? "+" : ""}${fmtNum(Math.round(((x - y) / y) * 100))}%`;
+  return {
+    text: [
+      `Нужно продаж в день: ${r1(s.salesDay)} вместо ${r1(b.salesDay)} (${d(s.salesDay, b.salesDay)}).`,
+      `Заявок в день: ${r1(s.leadsDay)} вместо ${r1(b.leadsDay)} (${d(s.leadsDay, b.leadsDay)}).`,
+      s.trafficDay && b.trafficDay ? `Обращений в день: ${r1(s.trafficDay)} вместо ${r1(b.trafficDay)}.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    leadsDay: s.leadsDay,
+    baseLeadsDay: b.leadsDay,
+  };
+}
+
+/** Прогноз канала: заявки и продажи в месяц и цена продажи */
+export function calcChannel(v: Record<string, unknown>) {
+  const budget = parseNum(v.budget_month);
+  const cpl = parseNum(v.cpl);
+  if (!budget || !cpl) return null;
+  const leads = budget / cpl;
+  const conv = parseNum(v.lead_conv);
+  const sales = conv ? (leads * conv) / 100 : null;
+  const cur = String(v.currency ?? "").trim();
+  return {
+    leads,
+    sales,
+    text: `${r1(leads)} заявок в месяц${sales != null ? `, ${r1(sales)} продаж, цена продажи ${r1(budget / (sales || 1))}${cur ? " " + cur : ""}` : ""}.`,
+  };
+}
+
+/** Поля, которые платформа считает сама при сохранении записи. items — записи плана для расчётов, зависящих от других уровней. */
+export function deriveValues(sectionKey: string, values: Record<string, unknown>, items: { sectionKey: string; values: Record<string, unknown>; reviewStatus: string }[] = []) {
+  if (sectionKey === "goal_math") {
+    const m = calcGoal(values);
+    return m ? { ...values, result: m.text, verdict: m.verdict } : values;
+  }
+  if (sectionKey === "unit_economics") {
+    const m = calcUnit(values);
+    return m ? { ...values, result: m.text, verdict: m.verdict } : values;
+  }
+  if (sectionKey === "channel_budget") {
+    const m = calcChannel(values);
+    return m ? { ...values, result: m.text } : values;
+  }
+  if (sectionKey === "scenarios") {
+    const base = items.find((i) => i.sectionKey === "goal_math" && i.reviewStatus === "signed") ?? items.find((i) => i.sectionKey === "goal_math");
+    const m = calcScenario(values, base?.values);
+    return m ? { ...values, result: m.text } : { ...values, result: base ? values.result : "Сначала подпишите расчёт цели: сценарий считается от него." };
+  }
+  return values;
 }

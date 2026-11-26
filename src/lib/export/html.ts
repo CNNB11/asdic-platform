@@ -1,7 +1,9 @@
 import "server-only";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import { docParts, type Dashboard, type DocItem, type DocModel, type DocSection, type Kpi } from "./model";
+import { docParts, type Dashboard, type DeepBlocks, type DocItem, type DocModel, type DocSection, type Kpi } from "./model";
+import { themeOf, type ThemeKey } from "./themes";
+import { embeddedFontCss } from "@/lib/images/fonts";
 import { readStored } from "@/lib/sources";
 import { fmtNum, ruDay } from "@/lib/num";
 
@@ -34,11 +36,48 @@ async function logoUri(m: DocModel) {
   }
 }
 
-const accentOf = (m: DocModel) => (/^#[0-9a-f]{6}$/i.test(m.brand?.accent ?? "") ? m.brand!.accent! : "#141414");
+/** Стиль документа. Старые документы без style: минимализм и цвет из brand.accent */
+function styleOf(m: DocModel, override?: string) {
+  const st = m.style;
+  const theme = themeOf(override ?? st?.theme ?? "minimal");
+  const a = m.brand?.accent ?? "";
+  const own = /^#[0-9a-f]{6}$/i.test(a) && a.toLowerCase() !== "#141414" ? a : !st && a ? a : null;
+  // Если тему переключили при скачивании, цвета и шрифты бренда сохраняем, иначе берём из темы
+  const keep = st && (st.source === "brand" || !override || override === st.theme);
+  return {
+    theme: theme.key as ThemeKey,
+    accent: own ?? (keep && st ? st.accent : theme.accent),
+    head: keep && st?.source === "brand" ? st.head : theme.head,
+    body: keep && st?.source === "brand" ? st.body : theme.body,
+  };
+}
+
+const fontMemo = new Map<string, Promise<string>>();
+/** Шрифты темы или бренда, встроенные в файл: документ выглядит одинаково без интернета */
+function themeFonts(families: string[]) {
+  const list = [...new Set(families.filter((f) => f && f !== "SG"))];
+  if (!list.length) return Promise.resolve("");
+  const key = list.join("|");
+  if (!fontMemo.has(key)) {
+    const p = embeddedFontCss(list.map((f) => `font-family:"${f}";`).join(""), 2_500_000)
+      .then((r) => r.css)
+      .catch(() => "");
+    fontMemo.set(key, p);
+    p.then((css) => {
+      if (!css) fontMemo.delete(key);
+    });
+  }
+  return fontMemo.get(key)!;
+}
+
+const fam = (f: string, fallback: string) => (f === "SG" ? `SG,${fallback}` : `"${f.replace(/"/g, "")}",SG,${fallback}`);
 
 /** Печатная версия: отчёт в стиле консалтинга. Space Grotesk 400, красный только для решений человека. */
-export async function renderHtml(m: DocModel): Promise<string> {
+export async function renderHtml(m: DocModel, themeOverride?: string): Promise<string> {
   const font = await readFile(path.join(process.cwd(), "src/fonts/SpaceGrotesk-Regular.woff2"));
+  const sty = styleOf(m, themeOverride);
+  const extraFonts = await themeFonts([sty.head, sty.body]);
+  const serifHead = /serif|playfair|lora|literata|cormorant|garamond/i.test(sty.head) && !/sans/i.test(sty.head);
   const logo = await logoUri(m);
   const parts = docParts(m);
   const full = m.kind === "full";
@@ -47,6 +86,7 @@ export async function renderHtml(m: DocModel): Promise<string> {
 
   const toc: { id: string; title: string; sub?: string }[] = [];
   if (full && d) toc.push({ id: "summary", title: "Стратегия на одной странице" }, { id: "charts", title: "Цели, дорожная карта и SWOT" });
+  if (full && d?.deep) toc.push({ id: "economics", title: "Экономика, каналы и сценарии" });
   parts.forEach((p, i) => {
     const g = m.digest?.stages.find((x) => x.key === p.key);
     toc.push({ id: `part-${i}`, title: `${p.num}. ${p.titleRu}`, sub: g?.actionTitle ?? p.sections.map((s) => s.title).join(" · ") });
@@ -60,6 +100,7 @@ export async function renderHtml(m: DocModel): Promise<string> {
     full ? contents(toc) : "",
     full && d ? summary(m, d) : "",
     full && d ? charts(d) : "",
+    full && d?.deep ? deepSection(d.deep) : "",
     parts.map((p, i) => part(p.num, p.titleRu, p.title, p.question, p.sections, i, full, m.digest?.stages.find((x) => x.key === p.key))).join(""),
     m.outstanding.length ? `<section id="open" class="open page"><h2>Приложение. Что ещё не закрыто</h2><p class="cap">Пункты метода, которые на момент сборки не выполнены. Перед отправкой документа их стоит закрыть.</p><ul>${m.outstanding.map((o) => `<li>${e(o)}</li>`).join("")}</ul></section>` : "",
     m.sources.length ? sourcesBlock(m) : "",
@@ -68,11 +109,13 @@ export async function renderHtml(m: DocModel): Promise<string> {
 
   return `<!doctype html><html lang="ru"><head><meta charset="utf-8"><title>${e(m.planTitle)} · ${e(full ? "Стратегия" : m.stageTitle)}</title><style>
 @font-face{font-family:SG;src:url(data:font/woff2;base64,${font.toString("base64")}) format("woff2");font-weight:400}
+${extraFonts}
 @page{size:A4;margin:24mm 18mm 20mm}
 @page :first{margin:0}
-:root{--a:${accentOf(m)};--soft:color-mix(in srgb,var(--a) 10%,#fff);--mid:color-mix(in srgb,var(--a) 45%,#fff);--ink:#141414;--mut:#7d7d7a;--line:#e6e6e3;--red:${RED}}
-*{font-weight:400!important;box-sizing:border-box}
-body{font-family:SG,sans-serif;color:#262626;font-size:10pt;line-height:1.5;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+:root{--hf:${fam(sty.head, serifHead ? "Georgia,serif" : "sans-serif")};--bf:${fam(sty.body, "sans-serif")};--a:${sty.accent};--soft:color-mix(in srgb,var(--a) 10%,#fff);--mid:color-mix(in srgb,var(--a) 45%,#fff);--ink:#141414;--mut:#7d7d7a;--line:#e6e6e3;--red:${RED}}
+*{box-sizing:border-box}
+.t-minimal *{font-weight:400!important}
+body{font-family:var(--bf);color:#262626;font-size:10pt;line-height:1.5;margin:0;-webkit-print-color-adjust:exact;print-color-adjust:exact}
 h1{font-size:34pt;line-height:1.05;color:var(--ink);margin:0;letter-spacing:-.01em}
 h2{font-size:20pt;line-height:1.15;color:var(--ink);margin:0 0 3mm;break-after:avoid}
 h3{font-size:13pt;color:var(--ink);margin:8mm 0 2mm;display:flex;align-items:center;gap:2.5mm;break-after:avoid}
@@ -109,7 +152,7 @@ p{margin:0 0 2mm}
 .lbl{display:block;color:var(--mut);font-size:7.5pt;letter-spacing:.08em;text-transform:uppercase;margin-bottom:1mm}
 .quote{font-size:15pt;line-height:1.3;color:var(--ink);border-left:1.2mm solid var(--a);padding:1mm 0 1mm 5mm;margin:6mm 0}
 .kpis{display:grid;grid-template-columns:repeat(3,1fr);gap:4mm;margin:5mm 0}
-.kpi{border-top:1mm solid var(--a);padding-top:3mm;break-inside:avoid}
+.kpi{border-top:1mm solid var(--a);padding-top:3mm;break-inside:avoid;min-width:0;overflow-wrap:anywhere}
 .kpi .big{font-size:22pt;line-height:1.1;color:var(--ink)}
 .kpi .from{color:var(--mut);font-size:9pt}
 .kpi .unit{font-size:9pt;color:var(--mut)}
@@ -159,7 +202,7 @@ a{color:var(--ink)}
 .nda{border:.4mm solid var(--red);padding:4mm 5mm;margin:5mm 0;font-size:9pt}
 .nda b{color:var(--red);display:block;letter-spacing:.12em;text-transform:uppercase;font-size:8pt;margin-bottom:1mm}
 .facts4{display:grid;grid-template-columns:repeat(3,1fr);gap:3mm;margin-top:5mm;font-size:8.5pt}.facts4 .card{padding:3mm 4mm}
-#summary .card{font-size:9pt}#summary .kpis{margin:3mm 0}#summary .quote{font-size:13pt;margin:4mm 0}
+#summary .card{font-size:8.5pt;padding:3mm 4mm}#summary .kpis{margin:2mm 0}#summary .quote{font-size:12.5pt;margin:3mm 0}#summary .call{font-size:8.5pt;margin:1.6mm 0;padding:1.2mm 0 1.2mm 3.5mm}#summary .call b{font-size:9pt}#summary .facts4{margin-top:3mm}#summary .lead{font-size:11pt}
 .lead{font-size:12pt;line-height:1.45;color:#3a3a3a;margin-top:3mm;max-width:165mm}
 .call{border-left:1mm solid var(--line);padding:2mm 0 2mm 4mm;margin:2.5mm 0;font-size:9pt;break-inside:avoid}
 .call b{display:block;color:var(--ink);font-size:10pt;margin-bottom:.5mm}
@@ -191,9 +234,11 @@ body{background:#eeeeec;font-size:15px}
 .wm span{font-size:90px}
 @media (max-width:700px){body .doc>.cover{padding-left:44px}.cover .stamp{position:static;display:inline-block;justify-self:start;margin-bottom:14px;transform:none}.webnav{padding:10px 16px}.webnav .brand{min-width:0;flex-wrap:wrap}.webnav .brand>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:40vw}.webnav b{font-size:9px}.fs{grid-template-columns:1fr}.doc>section,.doc>.cover{padding:28px 20px}.kpis,.nums,.facts4,.meta{grid-template-columns:1fr 1fr}.grid2,.ab,.swot{grid-template-columns:1fr}.swot>div{border-right:0!important;border-bottom:1px solid var(--line)}.gantt{min-width:620px}.bar .legend{flex-direction:column}.ab .arrow{display:none}h1{font-size:28px}.webnav .links{display:none}}
 }
+h1,h2,h3,h4,.big,.quote,.opener .num,.toc a,.swot .t,.fn b{font-family:var(--hf)}
+${THEME_CSS[sty.theme]}
 .wm{position:fixed;left:0;top:0;width:100%;height:100%;display:flex;align-items:center;justify-content:center;pointer-events:none;z-index:9}
 .wm span{transform:rotate(-35deg);font-size:46pt;color:rgba(20,20,20,.05);white-space:nowrap;letter-spacing:.1em}
-</style></head><body>
+</style></head><body class="t-${sty.theme}">
 ${m.paid ? "" : `<div class="wm"><span>ASDIC™ · FREE</span></div>`}
 <nav class="webnav"><span class="brand">${logo ? `<img src="${logo}" alt="">` : ""}<span>${e(m.brand?.companyName || m.planTitle)}</span>${chrome.confidential ? `<b>Конфиденциально</b>` : ""}</span><span class="links">${toc.map((t) => `<a href="#${t.id}">${e(t.title.replace(/^\d+\.\s*/, ""))}</a>`).join("")}</span></nav>
 <main class="doc">${body}</main>
@@ -377,4 +422,104 @@ ${b?.contact ? `<div class="card" style="margin-top:5mm"><span class="lbl">Ко�
 function clip(s: string, n: number) {
   const t = (s ?? "").trim();
   return t.length > n ? t.slice(0, n - 1).trimEnd() + "…" : t;
+}
+
+/** Оформление тем поверх общей вёрстки. Сетка, графики и адаптивность общие. */
+const THEME_CSS: Record<ThemeKey, string> = {
+  minimal: "",
+  consulting: `
+.t-consulting h1,.t-consulting h2{font-weight:700;letter-spacing:-.005em}
+.t-consulting h3,.t-consulting h4,.t-consulting .swot .t{font-weight:700}
+.t-consulting .cover:before{width:auto;right:0;height:10mm;bottom:auto}
+.t-consulting .kicker{font-family:var(--bf);font-weight:600;font-size:8.5pt;letter-spacing:.18em}
+.t-consulting h3{border-bottom:.3mm solid var(--line);padding-bottom:1.5mm}
+.t-consulting .quote{font-style:italic}
+.t-consulting .kpi,.t-consulting .nums>div{border-top-width:.6mm}
+.t-consulting .big{font-weight:700}
+.t-consulting .opener .num{font-weight:700}
+.t-consulting table.src th,.t-consulting .gantt th{background:var(--soft);color:var(--ink)}
+.t-consulting .lbl,.t-consulting .meta b{font-weight:600}
+@media screen{.t-consulting .doc>section,.t-consulting .doc>.cover{border-radius:2px}.t-consulting body,body.t-consulting{background:#e9ebef}}
+@media screen and (max-width:700px){body.t-consulting .doc>.cover{padding-left:20px;padding-top:44px}}`,
+  startup: `
+.t-startup h1{font-weight:800;letter-spacing:-.025em}
+.t-startup h2{font-weight:800;letter-spacing:-.015em}
+.t-startup h3,.t-startup h4,.t-startup .swot .t{font-weight:700}
+.t-startup .cover{background:radial-gradient(120mm 120mm at 100% 0,var(--mid),transparent 70%),linear-gradient(160deg,var(--soft),#fff 55%)}
+.t-startup .cover:before{display:none}
+.t-startup .cover h1{font-size:40pt}
+.t-startup .kicker{display:inline-block;background:var(--a);color:#fff;padding:1mm 3.5mm;border-radius:10mm;font-size:8pt;font-weight:700;letter-spacing:.1em}
+.t-startup .card,.t-startup .call,.t-startup .open,.t-startup .nda{border-radius:4mm}
+.t-startup .kpi,.t-startup .nums>div{border-top:0;background:var(--soft);padding:4mm 5mm;border-radius:4mm}
+.t-startup .big{font-weight:800;color:var(--a)}
+.t-startup .ab div.box{border:0;background:#fff;border-radius:4mm;padding:3mm 4mm;box-shadow:0 1mm 4mm rgba(0,0,0,.06)}
+.t-startup .ab div.box.b{background:var(--a);color:#fff}.t-startup .ab div.box.b .lbl{color:rgba(255,255,255,.75)}
+.t-startup .swot{border-radius:4mm;overflow:hidden}
+.t-startup .bar .track,.t-startup .bar .fill,.t-startup .bar .fact,.t-startup .hb .tr,.t-startup .hb .fl{border-radius:2mm}
+.t-startup .fb{border-radius:3mm}
+.t-startup .dot{border-radius:50%}
+.t-startup .gantt .lane .m{border-radius:50%;transform:translateX(-50%)}
+.t-startup article{border-left-width:1mm;border-radius:0 2mm 2mm 0}
+.t-startup .lbl,.t-startup .meta b{font-weight:700}
+@media screen{.t-startup .doc>section,.t-startup .doc>.cover{border-radius:24px}body.t-startup{background:#f1f0f7}}
+@media screen and (max-width:700px){.t-startup .kpis,.t-startup .nums{grid-template-columns:1fr}.t-startup .kpi,.t-startup .nums>div{min-width:0}}`,
+  premium: `
+.t-premium h1,.t-premium h2,.t-premium h3{font-weight:500;letter-spacing:0}
+.t-premium h4,.t-premium .swot .t{font-weight:600}
+.t-premium .cover{background:#111;color:#d9d3c7}
+.t-premium .cover:before{width:auto;left:20mm;right:20mm;top:auto;bottom:0;height:1.2mm}
+.t-premium .cover h1{color:#fff;font-size:40pt;font-weight:500}
+.t-premium .cover .sub,.t-premium .cover .made{color:#a59e91}
+.t-premium .cover .meta{border-top-color:#333}.t-premium .cover .meta b,.t-premium .cover .lbl{color:var(--a)}
+.t-premium .cover .ab div.box{border-top-color:#333}.t-premium .cover .ab div.box.b{border-top-color:var(--a)}
+.t-premium .cover .logo .name{color:#fff}
+.t-premium .cover .logo img{background:#fff;padding:2mm 3mm;border-radius:1mm}
+.t-premium .kicker{letter-spacing:.32em;font-size:8pt}
+.t-premium .quote{font-style:italic;border-left-width:.4mm;font-size:17pt}
+.t-premium .kpi,.t-premium .nums>div{border-top:.3mm solid var(--a)}
+.t-premium .big{font-weight:500}
+.t-premium .opener .num{font-style:italic;font-weight:400}
+.t-premium .toc li:before{font-family:var(--hf);font-style:italic}
+.t-premium .fb{background:#1b1b1b!important;color:#f3e6c8;border-bottom:.6mm solid var(--a)}
+.t-premium .lbl,.t-premium .meta b{letter-spacing:.2em}
+@media screen{body.t-premium{background:#e8e5df}.t-premium .doc>.cover{background:#111}.t-premium .webnav{background:rgba(17,17,17,.94);border-bottom-color:#2a2a2a}.t-premium .webnav .brand{color:#fff}.t-premium .webnav .links a{color:#a59e91}.t-premium .webnav .links a:hover{color:#fff}}`,
+};
+
+/** Глубокая стратегия: юнит-экономика, каналы, сценарии, бенчмарки и контент-план */
+function deepSection(x: DeepBlocks) {
+  const r = (n: number) => fmtNum(n >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+  const blocks: string[] = [];
+  if (x.unit) {
+    const col = x.unit.verdict === "healthy" ? "#3dbe8b" : x.unit.verdict === "thin" ? "#f0a93b" : RED;
+    blocks.push(`<div style="break-inside:avoid"><h2>Юнит-экономика${x.unit.name ? `: ${e(x.unit.name)}` : ""}</h2><p class="cap">Сколько приносит один клиент и сколько стоит его привлечь. <span style="color:${col}">● ${e(x.unit.verdictText)}</span></p>
+<div class="nums">${x.unit.cards.map((c) => `<div><div class="big">${e(c.value)}</div><span class="cap">${e(c.label)}</span></div>`).join("")}</div></div>`);
+  }
+  if (x.channels) {
+    const max = Math.max(...x.channels.rows.map((c) => c.leads)) || 1;
+    const cur = x.channels.currency ? " " + e(x.channels.currency) : "";
+    const total = x.channels.rows.reduce((a, c) => a + c.budget, 0);
+    const leads = x.channels.rows.reduce((a, c) => a + c.leads, 0);
+    blocks.push(`<div style="break-inside:avoid;margin-top:8mm"><h2>Бюджет по каналам и прогноз заявок</h2><p class="cap">Всего ${fmtNum(Math.round(total))}${cur} в месяц, около ${r(leads)} заявок. Длина полосы: заявки в месяц.</p>
+<div class="hbars">${x.channels.rows
+      .map(
+        (c) =>
+          `<div class="hb"><span class="nm">${e(c.channel)}</span><span class="tr"><span class="fl" style="width:${Math.max(3, (c.leads / max) * 100).toFixed(1)}%"></span></span><span class="vl"><b>${r(c.leads)}</b> заявок${c.sales != null ? ` · ${r(c.sales)} продаж` : ""}<br><span class="cap">${fmtNum(Math.round(c.budget))}${cur} в мес.</span></span></div>`,
+      )
+      .join("")}</div></div>`);
+  }
+  if (x.scenarios) {
+    const max = Math.max(x.scenarios.base, ...x.scenarios.rows.map((s) => s.leadsDay)) * 1.1 || 1;
+    const row = (name: string, v: number, base: boolean, note = "") =>
+      `<div class="hb${base ? " base" : ""}"><span class="nm">${e(name)}</span><span class="tr"><span class="fl" style="width:${Math.max(3, (v / max) * 100).toFixed(1)}%"></span><i class="mk" style="left:${((x.scenarios!.base / max) * 100).toFixed(1)}%"></i></span><span class="vl"><b>${r(v)}</b> заявок в день${note ? `<br><span class="cap">${e(clip(note, 90))}</span>` : ""}</span></div>`;
+    blocks.push(`<div style="break-inside:avoid;margin-top:8mm"><h2>Сценарии «что если»</h2><p class="cap">Сколько заявок в день нужно для той же цели при другой цене или конверсии. Вертикальная черта: базовый расчёт.</p>
+<div class="hbars">${row("Базовый расчёт", x.scenarios.base, true)}${x.scenarios.rows.map((s) => row(s.name, s.leadsDay, false, s.comment)).join("")}</div></div>`);
+  }
+  if (x.benchmarks?.length)
+    blocks.push(`<div style="break-inside:avoid;margin-top:8mm"><h2>Бенчмарки ниши</h2><table class="src"><tr><th>Показатель</th><th>В нише</th><th>У нас</th></tr>${x.benchmarks.map((b) => `<tr><td>${e(b.metric)}</td><td>${e(b.niche)}</td><td>${e(b.ours || "—")}</td></tr>`).join("")}</table></div>`);
+  if (x.content?.length)
+    blocks.push(`<div style="margin-top:8mm"><h2>Контент-план на 90 дней</h2><div class="gwrap"><table class="src cp"><tr><th>Неделя</th><th>Тема</th><th>Канал</th><th>Формат</th><th>Призыв</th></tr>${x.content
+      .map((c) => `<tr><td>${e(c.week)}</td><td>${e(c.topic)}</td><td>${e(c.channel)}</td><td>${e(c.format)}</td><td>${e(c.cta)}</td></tr>`)
+      .join("")}</table></div></div>`);
+  return `<section id="economics" class="page"><div class="kicker">Глубокая стратегия</div>${blocks.join("")}</section>
+<style>.hbars{display:grid;gap:3mm;margin-top:4mm}.hb{display:grid;grid-template-columns:42mm 1fr 44mm;gap:4mm;align-items:center;font-size:9pt;break-inside:avoid}.hb .tr{position:relative;height:6mm;background:#f3f3f1}.hb .fl{position:absolute;left:0;top:0;bottom:0;background:var(--a)}.hb.base .fl{background:var(--mid)}.hb .mk{position:absolute;top:-1mm;bottom:-1mm;width:.5mm;background:var(--ink)}.hb .vl b{color:var(--ink)}table.cp td:first-child{white-space:nowrap}@media screen and (max-width:700px){.hb{grid-template-columns:1fr;gap:1.5mm}table.cp{min-width:560px}}</style>`;
 }

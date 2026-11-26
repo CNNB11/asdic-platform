@@ -6,6 +6,7 @@ import { createPlan } from "@/app/actions";
 import { TopBar } from "@/components/TopBar";
 import { Submit } from "@/components/Submit";
 import { fmtDate } from "@/components/ui";
+import { DepthChoice } from "@/components/DepthChoice";
 
 export default async function PlansPage() {
   const user = await requireUser();
@@ -53,6 +54,11 @@ export default async function PlansPage() {
                 <span className="cap">Куда хотите прийти и к какому сроку.</span>
                 <textarea name="pointB" className="field" rows={4} />
               </label>
+            </div>
+            <div className="grid gap-1.5">
+              <span className="text-head">Глубина стратегии</span>
+              <span className="cap">Можно поменять в любой момент, ничего не потеряется.</span>
+              <DepthChoice value="standard" />
             </div>
             <div>
               <Submit>Создать план</Submit>

@@ -58,6 +58,8 @@ export const plans = pgTable("plans", {
   pointA: text("point_a").notNull().default(""),
   pointB: text("point_b").notNull().default(""),
   language: text("language").notNull().default("ru"),
+  /** Глубина стратегии: standard | deep. Переключается в любой момент, записи не теряются. */
+  depth: text("depth").notNull().default("standard"),
   /** Оформление выгрузки: логотип, данные на обложке, цвет, гриф NDA */
   brand: jsonb("brand").$type<PlanBrand>(),
   /** Контроль: окно сверок после закрытия Strategy */
@@ -84,6 +86,10 @@ export interface PlanBrand {
   confidential?: boolean;
   /** Текст уведомления о конфиденциальности */
   ndaText?: string;
+  /** Тема оформления: consulting | startup | premium | minimal */
+  theme?: string;
+  /** Брать цвета и шрифты из утверждённого фирменного стиля плана (по умолчанию да) */
+  autoStyle?: boolean;
 }
 
 export interface PlanControl {

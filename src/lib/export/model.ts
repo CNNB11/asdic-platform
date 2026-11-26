@@ -6,9 +6,11 @@ import { displayValue, findStage, itemTitle, type Method, type Stage } from "@/m
 import { sectionStatus } from "@/lib/progress";
 import { MODE_LABEL } from "@/components/ui";
 import { datesIn, isoDay, parseDate, parseNum } from "@/lib/num";
-import { calcGoal } from "@/lib/goalMath";
+import { calcChannel, calcGoal, calcScenario, calcUnit } from "@/lib/goalMath";
+import { fmtNum } from "@/lib/num";
 import type { Digest } from "./digest";
 import { ROLES } from "@/method/asdic";
+import { themeOf, type ThemeKey } from "./themes";
 
 export interface DocItem {
   title: string;
@@ -70,6 +72,16 @@ export interface Dashboard {
   funnel?: { revenue: number; currency: string; months: number; verdict: string; verdictText: string; steps: { label: string; month: number; day: number }[] };
   /** Начало и конец шкалы времени, ГГГГ-ММ-ДД */
   range?: { from: string; to: string };
+  /** Блоки глубокой стратегии: есть только там, где заполнены соответствующие уровни */
+  deep?: DeepBlocks;
+}
+
+export interface DeepBlocks {
+  unit?: { name: string; verdict: string; verdictText: string; cards: { value: string; label: string }[] };
+  channels?: { currency: string; rows: { channel: string; budget: number; leads: number; sales: number | null }[] };
+  scenarios?: { base: number; rows: { name: string; leadsDay: number; comment: string }[] };
+  content?: { week: string; topic: string; channel: string; format: string; cta: string }[];
+  benchmarks?: { metric: string; niche: string; ours: string }[];
 }
 
 export interface DocModel {
@@ -97,6 +109,17 @@ export interface DocModel {
   /** Платный тариф на момент сборки: белый лейбл, без водяного знака */
   paid?: boolean;
   brand?: PlanBrand;
+  /** Оформление на момент сборки: тема, акцент и шрифты (из фирменного стиля, своего цвета или темы) */
+  style?: DocStyle;
+}
+
+export interface DocStyle {
+  theme: ThemeKey;
+  accent: string;
+  head: string;
+  body: string;
+  /** brand — из утверждённого фирменного стиля плана */
+  source: "brand" | "theme";
 }
 
 type Plan = typeof schema.plans.$inferSelect;
@@ -169,6 +192,46 @@ async function collect(plan: Plan, stages: Stage[], paid: boolean) {
   return { parts, sources, outstanding, items };
 }
 
+const lum = (hex: string) => {
+  const n = parseInt(hex.slice(1), 16);
+  const [r, g, b] = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((c) => {
+    const x = c / 255;
+    return x <= 0.03928 ? x / 12.92 : ((x + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * r + 0.7152 * g + 0.0722 * b;
+};
+
+/** Тема из настроек; цвета и шрифты берём из утверждённого бренд-борда, если человек это разрешил */
+export async function resolveStyle(plan: Plan): Promise<DocStyle> {
+  const b = plan.brand ?? {};
+  const t = themeOf(b.theme);
+  const style: DocStyle = { theme: t.key, accent: t.accent, head: t.head, body: t.body, source: "theme" };
+  if (b.autoStyle !== false) {
+    const boards = await db
+      .select({ meta: schema.visuals.meta, verdict: schema.visuals.verdict, at: schema.visuals.createdAt })
+      .from(schema.visuals)
+      .where(and(eq(schema.visuals.planId, plan.id), inArray(schema.visuals.verdict, ["accepted", "base"])));
+    const board = boards
+      .filter((v) => v.meta?.palettes?.length || v.meta?.fonts?.length)
+      .sort((x, y) => (x.verdict === "base" ? -1 : 0) - (y.verdict === "base" ? -1 : 0) || +y.at - +x.at)[0]?.meta;
+    if (board) {
+      const pal = board.palettes?.find((p) => p.recommended) ?? board.palettes?.find((p) => p.kind === "brand") ?? board.palettes?.[0];
+      const colors = (pal?.colors ?? []).filter((c) => /^#[0-9a-f]{6}$/i.test(c.hex));
+      const usable = colors.filter((c) => lum(c.hex) > 0.03 && lum(c.hex) < 0.6);
+      const acc = usable.find((c) => /акцент|accent|основн|primary|бренд/i.test(c.role)) ?? usable[0];
+      if (acc) style.accent = acc.hex;
+      const head = board.fonts?.find((f) => /заголов|head|display|логот/i.test(f.role))?.family ?? board.fonts?.[0]?.family;
+      const body = board.fonts?.find((f) => /текст|body|основн|наборн/i.test(f.role))?.family ?? board.fonts?.[1]?.family ?? head;
+      if (head) style.head = head;
+      if (body) style.body = body;
+      if (acc || head) style.source = "brand";
+    }
+  }
+  // #141414 старая форма сохраняла всегда, это не выбор человека
+  if (b.accent && /^#[0-9a-f]{6}$/i.test(b.accent) && b.accent.toLowerCase() !== "#141414") style.accent = b.accent;
+  return style;
+}
+
 function base(plan: Plan, method: Method, userName: string, paid: boolean) {
   return {
     planTitle: plan.title,
@@ -189,6 +252,7 @@ export async function buildStageModel(plan: Plan, method: Method, stageKey: stri
   return {
     kind: "stage",
     ...base(plan, method, userName, paid),
+    style: await resolveStyle(plan),
     stageNum: stage.num,
     stageTitle: stage.title,
     stageTitleRu: stage.titleRu,
@@ -205,6 +269,7 @@ export async function buildFullModel(plan: Plan, method: Method, userName: strin
   return {
     kind: "full",
     ...base(plan, method, userName, paid),
+    style: await resolveStyle(plan),
     stageNum: "",
     stageTitle: "Стратегия",
     stageTitleRu: "Полный план A → B",
@@ -288,6 +353,45 @@ async function buildDashboard(plan: Plan, all: Item[]): Promise<Dashboard> {
     funnel = { revenue: parseNum(gm.revenue_target) ?? 0, currency: s(gm.currency), months: calc.months, verdict: calc.verdict, verdictText: VERD[calc.verdict], steps };
   }
 
+  const deep: DeepBlocks = {};
+  const r1 = (n: number) => fmtNum(n >= 100 ? Math.round(n) : Math.round(n * 10) / 10);
+  const ue = of("unit_economics")[0];
+  const u = ue ? calcUnit(ue.values) : null;
+  if (ue && u) {
+    const cur = s(ue.values.currency);
+    const money = (n: number) => `${n >= 1e6 ? fmtNum(Math.round(n / 1e5) / 10) + " млн" : n >= 1e4 ? fmtNum(Math.round(n / 100) / 10) + " тыс." : r1(n)}${cur ? " " + cur : ""}`;
+    const VERD: Record<string, string> = { healthy: "Здоровая экономика", thin: "На грани", loss: "Убыточно" };
+    deep.unit = {
+      name: s(ue.values.name),
+      verdict: u.verdict,
+      verdictText: VERD[u.verdict],
+      cards: [
+        { value: money(u.ltv), label: "LTV, ценность клиента" },
+        { value: Number.isFinite(u.ratio) ? `${r1(u.ratio)}×` : "∞", label: "LTV / CAC" },
+        { value: Number.isFinite(u.paybackMonths) ? `${r1(u.paybackMonths)} мес.` : "нет", label: "Окупаемость привлечения" },
+        ...(u.breakeven != null ? [{ value: r1(u.breakeven), label: "Продаж в месяц до безубыточности" }] : []),
+      ],
+    };
+  }
+  const ch = of("channel_budget")
+    .map((i) => ({ i, c: calcChannel(i.values) }))
+    .filter((x): x is { i: Item; c: NonNullable<ReturnType<typeof calcChannel>> } => !!x.c);
+  if (ch.length)
+    deep.channels = {
+      currency: s(ch[0].i.values.currency),
+      rows: ch.map(({ i, c }) => ({ channel: s(i.values.channel), budget: parseNum(i.values.budget_month) ?? 0, leads: c.leads, sales: c.sales })).sort((a, b) => b.leads - a.leads),
+    };
+  const gmBase = of("goal_math").find((i) => i.reviewStatus === "signed")?.values ?? first("goal_math");
+  const sc = of("scenarios")
+    .map((i) => ({ i, c: calcScenario(i.values, gmBase) }))
+    .filter((x): x is { i: Item; c: NonNullable<ReturnType<typeof calcScenario>> } => !!x.c);
+  if (sc.length) deep.scenarios = { base: sc[0].c.baseLeadsDay, rows: sc.map(({ i, c }) => ({ name: s(i.values.name), leadsDay: c.leadsDay, comment: s(i.values.comment) })) };
+  const FORMAT: Record<string, string> = { post: "Пост", article: "Статья", video: "Видео", short: "Короткое видео", case: "Кейс", email: "Письмо", webinar: "Вебинар" };
+  const cp = of("content_plan").sort((a, b) => (parseNum(a.values.week) ?? 0) - (parseNum(b.values.week) ?? 0));
+  if (cp.length) deep.content = cp.map((i) => ({ week: s(i.values.week), topic: s(i.values.topic), channel: s(i.values.channel), format: FORMAT[s(i.values.format)] ?? s(i.values.format), cta: s(i.values.cta) }));
+  const bm = of("benchmarks");
+  if (bm.length) deep.benchmarks = bm.map((i) => ({ metric: s(i.values.metric), niche: s(i.values.niche_value), ours: s(i.values.our_value) }));
+
   const seg = of("segments").sort((a, b) => s(a.values.priority).localeCompare(s(b.values.priority)))[0];
   const budget = first("budget");
   return {
@@ -300,6 +404,7 @@ async function buildDashboard(plan: Plan, all: Item[]): Promise<Dashboard> {
     timeline,
     range,
     funnel,
+    deep: Object.keys(deep).length ? deep : undefined,
   };
 }
 

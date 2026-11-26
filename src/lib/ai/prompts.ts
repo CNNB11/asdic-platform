@@ -1,6 +1,6 @@
 import "server-only";
 import type { Part } from "./provider";
-import { displayValue, findSection, itemTitle, type Method, type Section, type Stage } from "@/method";
+import { displayValue, findSection, hasSection, itemTitle, type Method, type Section, type Stage } from "@/method";
 
 export interface PlanCtx {
   title: string;
@@ -97,6 +97,7 @@ function teamLine(plan: PlanCtx) {
 }
 
 export function itemsBlock(method: Method, items: ItemCtx[]) {
+  items = items.filter((it) => hasSection(method, it.sectionKey));
   if (items.length === 0) return "<plan_items>В плане пока нет записей.</plan_items>";
   const lines = items.map((it) => {
     const { section } = findSection(method, it.sectionKey);

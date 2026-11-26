@@ -5,7 +5,9 @@ import { itemOr404, requirePlan, sectionOr404 } from "@/lib/access";
 import { approveItem, deleteItem, startCritique } from "@/app/actions";
 import { capabilities } from "@/lib/ai/provider";
 import { locateQuote } from "@/lib/sources";
-import { itemTitle } from "@/method";
+import { hasSection, itemTitle } from "@/method";
+import { calcGoal } from "@/lib/goalMath";
+import { parseNum } from "@/lib/num";
 import { PendingNote, Submit } from "@/components/Submit";
 import { Visuals } from "@/components/Visuals";
 import { Cost } from "@/components/Cost";
@@ -37,6 +39,25 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/pla
   const evidence = cits.map(({ c, title, text }) => ({ field: c.fieldKey, sourceTitle: title, quote: c.quote, page: locateQuote(text, c.quote).page }));
   const pending = ops.filter((o) => o.status === "ready");
   const d = item.decision;
+  const gm = item.sectionKey === "goal_math" && hasSection(method, "goals") ? calcGoal(item.values) : null;
+  const goalLinks = gm
+    ? (() => {
+        const v = item.values as Record<string, unknown>;
+        const cur = String(v.currency ?? "").trim();
+        const q = (o: Record<string, string>) => `${base}/s/goals/new?${new URLSearchParams(o).toString()}`;
+        const deadline = String(v.period_end ?? "");
+        const now = parseNum(v.revenue_now);
+        const conv = parseNum(v.lead_conv) || 1;
+        return [
+          { label: "Цель по выручке", href: q({ goal: "Выйти на целевую выручку", metric: "Выручка за период", unit: cur || "₽", current: now ? String(now) : "0", target: String(parseNum(v.revenue_target) ?? ""), deadline }) },
+          {
+            label: "Цель по заявкам в месяц",
+            href: q({ goal: "Получать нужный поток заявок", metric: "Заявки в месяц", unit: "заявок в месяц", current: now ? String(Math.round((now / (parseNum(v.avg_check) || 1) / gm.months / (conv / 100)) || 0)) : "0", target: String(Math.ceil(gm.leadsMonth)), deadline }),
+          },
+          { label: "Цель по продажам в месяц", href: q({ goal: "Выйти на нужное число продаж", metric: "Продажи в месяц", unit: "продаж в месяц", current: "0", target: String(Math.ceil(gm.salesMonth)), deadline }) },
+        ];
+      })()
+    : null;
 
   return (
     <div className="grid max-w-4xl gap-6">
@@ -93,6 +114,20 @@ export default async function ItemPage({ params, searchParams }: PageProps<"/pla
         <ValuesView section={section} values={item.values} evidence={evidence} />
         {evidence.length === 0 && section.fields.some((f) => f.evidence === "recommended") && <p className="cap mt-4">У записи нет цитат из источников.</p>}
       </section>
+
+      {goalLinks && (
+        <section className="card p-5">
+          <h2>Создать цель из расчёта</h2>
+          <p className="prose-w mt-1">Цифры перенесутся в форму цели. Контроль будет сверять факт именно с ними.</p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {goalLinks.map((g) => (
+              <Link key={g.label} href={g.href} className="btn">
+                {g.label}
+              </Link>
+            ))}
+          </div>
+        </section>
+      )}
 
       {section.visuals && (
         <Visuals
